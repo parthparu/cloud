@@ -1,0 +1,8 @@
+/node_modules
+
+# Local secrets — copy .env.example to .env instead
+.env
+
+# Local SQLite database and uploaded files
+/data
+/src/uploads

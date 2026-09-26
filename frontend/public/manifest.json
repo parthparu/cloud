@@ -1,0 +1,15 @@
+{
+  "short_name": "ChatScale",
+  "name": "ChatScale",
+  "icons": [
+    {
+      "src": "favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#2f6b4f",
+  "background_color": "#f4f1ea"
+}

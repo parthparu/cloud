@@ -1,0 +1,70 @@
+/* Dialogs */
+
+/* ---------- Modal ---------- */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: var(--scrim);
+  animation: fade-in 120ms ease-out;
+}
+
+.modal {
+  width: 100%;
+  max-width: 460px;
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--bg);
+  box-shadow: var(--shadow);
+  animation: rise-in 160ms ease-out;
+}
+
+.modal__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 20px 0 24px;
+}
+
+.modal__title {
+  font-family: var(--font-serif);
+  font-weight: 500;
+  font-size: 1.3rem;
+}
+
+.modal__description {
+  margin-top: 4px;
+  font-size: 0.9rem;
+  color: var(--ink-3);
+}
+
+.modal__body {
+  padding: 20px 24px 24px;
+}
+
+.modal__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.placeholder-block {
+  padding: 14px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius);
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+}
+
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(6px); }
+}

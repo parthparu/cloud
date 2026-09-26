@@ -1,0 +1,135 @@
+/* Sign-in / sign-up and the standalone invite page */
+
+/* ---------- Auth ---------- */
+.auth {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+  min-height: 100%;
+}
+
+.auth__aside {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 24px;
+  padding: 48px clamp(32px, 6vw, 88px);
+  background: var(--bg-sidebar);
+  border-right: 1px solid var(--line);
+}
+
+.auth__pitch {
+  max-width: 22ch;
+  font-family: var(--font-serif);
+  font-weight: 500;
+  font-size: clamp(1.6rem, 2.6vw, 2.3rem);
+  line-height: 1.2;
+  letter-spacing: -0.015em;
+}
+
+.auth__points {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  color: var(--ink-2);
+}
+
+.auth__points li {
+  display: flex;
+  gap: 10px;
+}
+
+.auth__points li::before {
+  content: "—";
+  color: var(--accent);
+}
+
+.auth__panel {
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+}
+
+.auth__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.auth__mobile-brand {
+  display: none;
+  margin-right: auto;
+}
+
+.auth__form-wrap {
+  width: 100%;
+  max-width: 380px;
+  margin: auto;
+  padding: 24px 0 48px;
+}
+
+.auth__title {
+  font-family: var(--font-serif);
+  font-weight: 500;
+  font-size: 1.8rem;
+  letter-spacing: -0.01em;
+}
+
+.auth__subtitle {
+  margin: 4px 0 28px;
+  color: var(--ink-3);
+}
+
+.auth__footer {
+  margin-top: 24px;
+  font-size: 0.92rem;
+  color: var(--ink-3);
+}
+
+/* ---------- Standalone (invite) ---------- */
+.standalone {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  padding: 16px 20px;
+}
+
+.standalone__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: 400px;
+  margin: auto;
+  padding: 32px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.card__title {
+  font-family: var(--font-serif);
+  font-weight: 500;
+  font-size: 1.7rem;
+  letter-spacing: -0.01em;
+}
+
+.eyebrow {
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.invite-card__meta {
+  margin-bottom: 8px;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  color: var(--ink-3);
+}

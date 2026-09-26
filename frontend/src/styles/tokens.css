@@ -1,0 +1,75 @@
+/* Design tokens: fonts, radii, and the light/dark palettes.
+   Light is warm paper; dark is warm charcoal. The accent is forest green. */
+
+:root {
+  --font-sans: "IBM Plex Sans", system-ui, sans-serif;
+  --font-serif: "IBM Plex Serif", Georgia, serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+
+  --radius-sm: 4px;
+  --radius: 6px;
+  --radius-lg: 10px;
+  --sidebar-width: 272px;
+
+  --bg: #f4f1ea;
+  --bg-sidebar: #ebe6db;
+  --surface: #fbf9f4;
+  --surface-hover: #e3ddd0;
+  --ink: #1d1b17;
+  --ink-2: #57524a;
+  --ink-3: #857f73;
+  --line: #dcd5c7;
+  --line-strong: #c4bba9;
+  --accent: #2f6b4f;
+  --accent-hover: #255a41;
+  --accent-ink: #ffffff;
+  --accent-soft: #dce8df;
+  --danger: #a8322a;
+  --danger-soft: #f6e2de;
+  --online: #3f8a5a;
+  --idle: #b98319;
+  --offline: #a39d91;
+  --shadow: 0 1px 2px rgb(40 32 20 / 0.06), 0 8px 24px rgb(40 32 20 / 0.10);
+  --scrim: rgb(29 27 23 / 0.35);
+
+  --tint-0-bg: #e6d5c3; --tint-0-fg: #6b4420;
+  --tint-1-bg: #d3e0d6; --tint-1-fg: #2d5a3f;
+  --tint-2-bg: #d6dbe6; --tint-2-fg: #34466b;
+  --tint-3-bg: #ead3d3; --tint-3-fg: #7a3434;
+  --tint-4-bg: #e7e0c4; --tint-4-fg: #62561d;
+  --tint-5-bg: #ddd6e3; --tint-5-fg: #54406a;
+
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --bg: #1a1916;
+  --bg-sidebar: #141311;
+  --surface: #22201c;
+  --surface-hover: #2b2924;
+  --ink: #ece7dc;
+  --ink-2: #b3ac9e;
+  --ink-3: #857e70;
+  --line: #312e28;
+  --line-strong: #46423a;
+  --accent: #7cc49b;
+  --accent-hover: #93d2ae;
+  --accent-ink: #0f2419;
+  --accent-soft: #22352a;
+  --danger: #e57f73;
+  --danger-soft: #3b2420;
+  --online: #6cc08c;
+  --idle: #e0ad4a;
+  --offline: #6f695e;
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 12px 32px rgb(0 0 0 / 0.4);
+  --scrim: rgb(0 0 0 / 0.55);
+
+  --tint-0-bg: #4a3726; --tint-0-fg: #f0cfae;
+  --tint-1-bg: #27402f; --tint-1-fg: #b5dfc2;
+  --tint-2-bg: #2b3550; --tint-2-fg: #c3cff0;
+  --tint-3-bg: #4d2b2b; --tint-3-fg: #f2c3c3;
+  --tint-4-bg: #45401f; --tint-4-fg: #e8dca0;
+  --tint-5-bg: #3c304b; --tint-5-fg: #dccbee;
+
+  color-scheme: dark;
+}

@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="icon" type="image/svg+xml" href="%PUBLIC_URL%/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="description" content="ChatScale — group chat for people who already know each other." />
+    <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
+    <title>ChatScale</title>
+    <script>
+      // Apply the saved (or system) theme before first paint to avoid a flash
+      (function () {
+        var theme;
+        try {
+          theme = localStorage.getItem("chatscale.theme");
+        } catch (e) {}
+        if (theme !== "light" && theme !== "dark") {
+          theme = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        }
+        document.documentElement.dataset.theme = theme;
+      })();
+    </script>
+  </head>
+  <body>
+    <noscript>You need to enable JavaScript to run ChatScale.</noscript>
+    <div id="root"></div>
+  </body>
+</html>
