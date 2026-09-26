@@ -2,7 +2,8 @@ import { FiTrash2 } from "react-icons/fi";
 import { formatDay, formatTime, groupMessages } from "../../lib/format";
 import Avatar from "../../components/Avatar";
 
-// Channel history: day dividers, and consecutive messages from one author grouped together
+// Channel history: day dividers, and consecutive messages from one author grouped together.
+// Someone else's message that arrives over the socket (not from history) briefly lights up.
 export default function MessageList({ messages, channelName, hasMore, onLoadOlder, currentUserId, canDelete, onDelete }) {
   return (
     <div className="messages__inner">
@@ -34,7 +35,7 @@ export default function MessageList({ messages, channelName, hasMore, onLoadOlde
                 </time>
               </header>
               {group.messages.map((m) => (
-                <div key={m.id} className="msg">
+                <div key={m.id} className={`msg ${m.live && m.userId !== currentUserId ? "msg--live" : ""}`}>
                   <p className="msg__text">{m.content}</p>
                   {canDelete(m) && (
                     <button type="button" className="icon-button icon-button--small msg__action" onClick={() => onDelete(m)} title="Delete message" aria-label="Delete message">

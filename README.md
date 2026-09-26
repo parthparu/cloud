@@ -39,7 +39,7 @@ project's *Session pooler* connection string. Tables are created on first start;
 **not** seeded into PostgreSQL.
 
 Configuration lives in `backend/.env` (never committed; `backend/.env.example` lists the keys): `PORT`, `JWT_SECRET`, `CLIENT_URL` (the frontend origin
-allowed to open sockets), `SQLITE_PATH`, and `TWO_FACTOR_KEY` (encrypts authenticator secrets;
+allowed to open sockets), `SQLITE_PATH`, `REDIS_URL` (lets several copies share real-time events), and `TWO_FACTOR_KEY` (encrypts authenticator secrets;
 two-step verification is unavailable without it). The frontend reads `REACT_APP_API_URL`
 (default `http://localhost:5001`).
 
@@ -53,7 +53,15 @@ One command starts both copies and both frontends — see [docs/DEMO.md](docs/DE
 full presentation script:
 
 ```bash
-./scripts/demo-two-copies.sh
+./scripts/demo-two-copies.sh            # the problem: messages don't cross copies
+```
+
+```bash
+./scripts/demo-two-copies.sh --fixed    # the fix: copies share events through Redis (Docker)
+```
+
+```bash
+cd backend && npm run watch-redis        # live, plain-English view of what flows through Redis
 ```
 
 Or by hand; each copy names itself in its logs and in the app's "Live · …" badge:
@@ -71,7 +79,9 @@ cd frontend && PORT=3001 REACT_APP_API_URL=http://localhost:5002 npm start
 ```
 
 Without a shared adapter, a message sent through one copy doesn't reach users on the other —
-see [docs/evidence/01-two-copies-break.md](docs/evidence/01-two-copies-break.md).
+see [docs/evidence/01-two-copies-break.md](docs/evidence/01-two-copies-break.md). With
+`REDIS_URL` set, every copy shares live events through Redis — see
+[docs/evidence/02-redis-fix.md](docs/evidence/02-redis-fix.md).
 
 ## Where things live
 
@@ -91,7 +101,7 @@ wp_project/
 │       ├── services/            database queries, one file per resource
 │       ├── middleware/          auth (JWT), uploads, error handler
 │       ├── utils/               tokens (JWT kinds), totp (authenticator codes), secretBox (encryption)
-│       └── socket/              real-time events: rooms, messages, typing, presence
+│       └── socket/              real-time events; adapter.js shares them across copies via Redis
 │
 └── frontend/
     ├── public/                  index.html (applies the theme before first paint), favicon

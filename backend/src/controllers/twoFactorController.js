@@ -4,46 +4,19 @@ const twoFactorService = require('../services/twoFactorService');
 const userService = require('../services/userService');
 const secretBox = require('../utils/secretBox');
 const tokens = require('../utils/tokens');
+const counters = require('../utils/counters');
 const { toSessionUser } = require('./authController');
 
 const ISSUER = 'ChatScale';
 const MAX_ATTEMPTS_PER_CHALLENGE = 5;
 const REUSED_MESSAGE = 'That code was just used. Wait for your app to show a new one.';
 
-// Failed code attempts per login challenge, so one correct password can't be followed by
-// unlimited guesses. In-memory: fine for one process; moves to Redis with the rest of the
-// shared state when the backend scales out (PLAN.md Phase 3).
-const failedAttempts = new Map();
-
-const recordFailure = (jti, expiresAtMs) => {
-  const count = (failedAttempts.get(jti)?.count || 0) + 1;
-  failedAttempts.set(jti, { count, expiresAtMs });
-  // Drop entries for challenges that have expired anyway
-  for (const [key, entry] of failedAttempts) {
-    if (entry.expiresAtMs < Date.now()) failedAttempts.delete(key);
-  }
-  return count;
-};
-
-// A second limit per account, so starting fresh sign-ins doesn't reset the guessing budget
+// Wrong-code limits. Counters are shared through Redis when it's configured (utils/counters.js),
+// so every copy of the backend enforces the same budget.
 const MAX_FAILURES_PER_USER = 10;
-const USER_WINDOW_MS = 15 * 60 * 1000;
-const failuresByUser = new Map();
-
-const userLockedOut = (userId) => {
-  const entry = failuresByUser.get(userId);
-  if (!entry || Date.now() - entry.windowStart > USER_WINDOW_MS) return false;
-  return entry.count >= MAX_FAILURES_PER_USER;
-};
-
-const recordUserFailure = (userId) => {
-  const entry = failuresByUser.get(userId);
-  if (!entry || Date.now() - entry.windowStart > USER_WINDOW_MS) {
-    failuresByUser.set(userId, { count: 1, windowStart: Date.now() });
-  } else {
-    entry.count += 1;
-  }
-};
+const USER_WINDOW_SECONDS = 15 * 60;
+const challengeKey = (jti) => `2fa:challenge:${jti}`;
+const userKey = (userId) => `2fa:user:${userId}`;
 
 const requireConfigured = (res) => {
   if (secretBox.isConfigured()) return true;
@@ -156,11 +129,11 @@ exports.completeLogin = async (req, res, next) => {
       return res.status(401).json({ message: 'Your sign-in expired. Enter your password again.', restart: true });
     }
 
-    if (userLockedOut(challenge.id)) {
+    if ((await counters.get(userKey(challenge.id))) >= MAX_FAILURES_PER_USER) {
       return res.status(429).json({ message: 'Too many wrong codes. Wait 15 minutes, then sign in again.', restart: true });
     }
 
-    const previous = failedAttempts.get(challenge.jti)?.count || 0;
+    const previous = await counters.get(challengeKey(challenge.jti));
     if (previous >= MAX_ATTEMPTS_PER_CHALLENGE) {
       return res.status(429).json({ message: 'Too many wrong codes. Enter your password again.', restart: true });
     }
@@ -171,8 +144,8 @@ exports.completeLogin = async (req, res, next) => {
       return res.status(400).json({ message: REUSED_MESSAGE });
     }
     if (result !== true) {
-      recordUserFailure(challenge.id);
-      const count = recordFailure(challenge.jti, challenge.exp * 1000);
+      await counters.increment(userKey(challenge.id), USER_WINDOW_SECONDS);
+      const count = await counters.increment(challengeKey(challenge.jti), challenge.exp - Date.now() / 1000);
       const left = MAX_ATTEMPTS_PER_CHALLENGE - count;
       return res.status(400).json({
         message: left > 0 ? `That code didn't match. ${left} ${left === 1 ? 'try' : 'tries'} left.` : 'Too many wrong codes. Enter your password again.',
@@ -180,7 +153,7 @@ exports.completeLogin = async (req, res, next) => {
       });
     }
 
-    failedAttempts.delete(challenge.jti);
+    await counters.reset(challengeKey(challenge.jti));
     const [user] = await userService.getUserById(challenge.id);
     await userService.updateUser(user.UserID, { LastLoginDate: new Date(), OnlineStatus: 'Online' });
 

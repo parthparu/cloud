@@ -120,6 +120,23 @@
   background: var(--surface);
 }
 
+/* A message that just arrived live from someone else */
+.msg--live {
+  animation: arrived-live 2.4s ease-out;
+}
+
+@keyframes arrived-live {
+  0%,
+  35% {
+    background: var(--accent-soft);
+    box-shadow: inset 3px 0 0 var(--accent);
+  }
+  100% {
+    background: transparent;
+    box-shadow: inset 3px 0 0 transparent;
+  }
+}
+
 .msg__text {
   flex: 1;
   min-width: 0;

@@ -83,7 +83,8 @@ export default function ChannelPage() {
     };
 
     const onNew = (raw) => {
-      const message = toMessage(raw);
+      // Marked live so it can be highlighted — distinguishes real-time delivery from history
+      const message = { ...toMessage(raw), live: true };
       if (message.channelId !== id) return;
       setMessages((current) => mergeMessages(current || [], [message]));
       setTyping((t) => {

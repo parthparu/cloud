@@ -13,17 +13,43 @@ fs.mkdirSync(path.dirname(databasePath), { recursive: true });
 const sqlite = new DatabaseSync(databasePath, { timeout: 5000 });
 sqlite.exec("PRAGMA busy_timeout = 5000;");
 sqlite.exec("PRAGMA foreign_keys = ON;");
-sqlite.exec("PRAGMA journal_mode = WAL;");
 
-for (const sql of tables) {
-  sqlite.exec(sql);
-}
-
-for (const [table, column, definition] of addedColumns) {
-  const existing = sqlite.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
-  if (!existing.includes(column)) {
-    sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+// WAL lets several processes read and write the file together. The setting is stored in the file,
+// so only the first process switches it; switching needs exclusive access and ignores the busy
+// timeout, so when two copies create a new file at once, retry briefly instead of crashing.
+const enableWal = () => {
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  for (let attempt = 1; ; attempt++) {
+    try {
+      if (sqlite.prepare("PRAGMA journal_mode").get().journal_mode === "wal") return;
+      sqlite.exec("PRAGMA journal_mode = WAL;");
+      return;
+    } catch (error) {
+      if (!/locked|busy/i.test(error.message) || attempt >= 100) throw error;
+      Atomics.wait(pause, 0, 0, 50); // synchronous 50 ms pause; this runs once at start-up
+    }
   }
+};
+enableWal();
+
+// Schema setup as one write transaction: BEGIN IMMEDIATE takes the write lock up front (waiting up
+// to the busy timeout), so copies starting together take turns — otherwise two can both see a
+// column missing and both try to add it.
+sqlite.exec("BEGIN IMMEDIATE");
+try {
+  for (const sql of tables) {
+    sqlite.exec(sql);
+  }
+  for (const [table, column, definition] of addedColumns) {
+    const existing = sqlite.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+    if (!existing.includes(column)) {
+      sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    }
+  }
+  sqlite.exec("COMMIT");
+} catch (error) {
+  sqlite.exec("ROLLBACK");
+  throw error;
 }
 
 const normalizeValue = (value) => {

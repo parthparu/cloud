@@ -4,7 +4,6 @@ const { verifyAccessToken } = require('../utils/tokens');
 const userService = require('../services/userService');
 const serverService = require('../services/serverService');
 const messageHandlers = require('./messageHandlers');
-const voiceHandlers = require('./voiceHandlers');
 
 let io;
 
@@ -74,8 +73,6 @@ exports.initializeSocket = (server) => {
     // join:channel / leave:channel live in messageHandlers, behind a membership check
 
     messageHandlers(io, socket);
-
-    voiceHandlers(io, socket);
 
     socket.on('disconnect', () => {
       console.log(`[${INSTANCE_NAME}] User disconnected: ${socket.user.username} (${socket.user.id})`);

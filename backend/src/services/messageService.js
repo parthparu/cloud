@@ -90,9 +90,6 @@ exports.updateMessage = async (messageId, messageData) => {
 // Delete message
 exports.deleteMessage = async (messageId) => {
   try {
-    // Delete attachments first
-    await db.execute('DELETE FROM Attachments WHERE MessageID = ?', [messageId]);
-    
     // Delete the message
     const [result] = await db.execute('DELETE FROM Messages WHERE MessageID = ?', [messageId]);
     

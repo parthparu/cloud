@@ -40,6 +40,9 @@
 | CHG-0020 | 2026-09-26 | Parth | Invitations (backend + frontend) | Invite to a space by username; live sidebar invitations with accept/decline; blocks not revealed | Feature | Low | Verified |
 | CHG-0021 | 2026-09-26 | Parth | Invites / Demo / Process | Email invite placeholder removed; demo reload pitfall documented; incident: test data written to Supabase, prevention added | Removal + Incident | Low | Implemented |
 | CHG-0022 | 2026-09-26 | Parth | Supabase data | Incident closed: 11 test users and 3 test spaces deleted from Supabase with owner approval; owner data verified intact | Data cleanup | Low | Verified |
+| CHG-0023 | 2026-09-27 | Parth | Socket layer / Demo | The fix: Redis adapter behind REDIS_URL (Valkey), shared 2FA counters, live-arrival highlight, demo --fixed mode; two SQLite start-up races fixed | Feature + Defect fix | Medium | Verified |
+| CHG-0024 | 2026-09-27 | Parth | Demo tooling | Plain-English live Redis watcher (npm run watch-redis); copies register their names in Redis | Tooling | Low | Verified |
+| CHG-0025 | 2026-09-27 | Parth | Backend / Supabase | Removed unused voice, attachment, direct-message, pin and reaction code and tables (Supabase 15 -> 9 tables); closes unauthenticated DM routes | Removal | Low | Verified |
 ---
 
 ## 2. Detailed Entries
@@ -1408,6 +1411,193 @@ Users `alice`, `bob`; one space, "demo day" (owner bob, 2 members, 2 messages); 
 
 **Rollback Plan**
 None needed; the deleted rows were test data only.
+
+---
+
+### CHG-0023 — The Fix: Redis Adapter Behind a Switch; Shared Counters; Demo Part 2
+
+| Field | Value |
+|---|---|
+| **Change ID** | CHG-0023 |
+| **Date Raised** | 2026-09-27 |
+| **Date Implemented** | 2026-09-27 |
+| **Author** | Parth |
+| **Module / Component** | Socket layer; two-factor limits; SQLite start-up; demo tooling; channel UI |
+| **Change Type** | Feature (experiment) + Defect fix |
+| **Risk Level** | Medium (changes how every broadcast is delivered when enabled) |
+| **Status** | Verified |
+| **Advances** | PLAN.md Phase 3b; closes CHG-0015 limitation 1 |
+
+**Description**
+Implements the fix for blocker B-1. With `REDIS_URL` set, Socket.IO uses the official
+`@socket.io/redis-adapter`, so every copy delivers every broadcast to its own users. Without
+`REDIS_URL` the in-memory adapter is kept, so the original failure stays reproducible from the same
+code — the experiment is a switch, not a code change. Redis is run as **Valkey 8** (open-source).
+
+**Changes Made**
+1. `socket/adapter.js` (new): connects publisher and subscriber clients, installs the adapter,
+   fails start-up with a clear message if Redis is unreachable; exposes the command client.
+   `server.js` waits for both the database and the adapter before listening.
+2. Delivery log now reports reach across copies via `fetchSockets()`
+   (`… on this copy + N on other copies via Redis`), asynchronously after the emit;
+   `LOG_DELIVERY=false` disables it for load tests.
+3. `utils/counters.js` (new): short-lived counters in Redis when configured, else in memory.
+   Two-factor wrong-code limits (per challenge and per account) use it, so the budget is shared by
+   all copies and survives restarts.
+4. Channel UI: someone else's message arriving over the socket is briefly highlighted
+   (`.msg--live`), distinguishing live delivery from history loaded by a reload.
+5. `scripts/demo-two-copies.sh --fixed`: starts Valkey in Docker (`chatscale-demo-valkey`, :6379),
+   passes `REDIS_URL` to both copies, banner states the mode, container removed on exit.
+   Default mode explicitly passes an empty `REDIS_URL`, so it stays broken even if `.env` gains one.
+6. `docs/DEMO.md` part 2 (the fix, with script and questions); `docs/evidence/02-redis-fix.md`.
+7. Dependencies: `@socket.io/redis-adapter` 8.3, `redis` 4.7.
+
+**Defects fixed (SQLite, found while testing two copies on fresh files)**
+- **D-10:** `PRAGMA journal_mode = WAL` failed with "database is locked" when two copies created a
+  file together — the mode switch needs exclusive access and ignores the busy timeout. Now skipped
+  when the file is already WAL, retried briefly otherwise.
+- **D-11:** both copies could see the 2FA columns missing and both `ALTER TABLE`, crashing the
+  second ("SQL logic error"). Schema setup now runs in one `BEGIN IMMEDIATE` transaction.
+- Stress test: 25 rounds × 4 simultaneous starts on fresh files — before: 10 failures in 60;
+  after: **0 in 100**.
+
+**Verification**
+- Cross-copy test (Alice on copy-A, Bob on copy-B): without Redis — message and friend request
+  **not** delivered; with Redis — both delivered, message in **6 ms**.
+- Shared 2FA budget: 3 wrong codes on copy-A + 2 on copy-B, then a 6th — **429 with Redis**,
+  still accepted without (per-copy counts).
+- Full suites, with and without Redis: core 31/31, invitations 17/17, two-factor 24/24.
+- Browser, `--fixed` demo (port-shifted test copy, scratch database — the owner's running demo and
+  Supabase untouched): milo's page, verified not reloaded, received ava's message **7 ms** after
+  send, highlighted live; log showed `+ 1 on other copies via Redis`. Ctrl-C removed the container.
+- `react-scripts build` clean.
+
+**Files Added**
+- `backend/src/socket/adapter.js`, `backend/src/utils/counters.js`, `docs/evidence/02-redis-fix.md`
+
+**Files Modified**
+- `backend/server.js`, `backend/src/socket/messageHandlers.js`, `backend/src/controllers/twoFactorController.js`,
+  `backend/src/config/db/sqlite.js`, `backend/package.json`, `backend/package-lock.json`, `backend/.env.example`,
+  `frontend/src/pages/channel/ChannelPage.js`, `frontend/src/pages/channel/MessageList.js`,
+  `frontend/src/styles/channel.css`, `scripts/demo-two-copies.sh`, `docs/DEMO.md`, `README.md`, `docs/CHANGE_LOG.md`
+
+**Known Limitations / next measurements**
+1. Redis is now a single point of failure for cross-copy delivery (chaos test, PLAN.md Phase 8).
+2. The Redis hop's latency cost needs measuring under load and against a managed Redis (Phase 6).
+3. Classic (non-sharded) pub/sub adapter chosen for compatibility with Valkey and managed Redis
+   free tiers; sharded pub/sub is a later optimisation.
+
+**Rollback Plan**
+Unset `REDIS_URL` — behaviour returns to the in-memory adapter immediately. Tag `demo-break-v1`
+holds the pre-fix code.
+
+---
+
+### CHG-0024 — Redis Watcher for Demos; Copies Register Their Names in Redis
+
+| Field | Value |
+|---|---|
+| **Change ID** | CHG-0024 |
+| **Date Raised** | 2026-09-27 |
+| **Date Implemented** | 2026-09-27 |
+| **Author** | Parth |
+| **Module / Component** | Demo tooling; socket adapter |
+| **Change Type** | Tooling |
+| **Risk Level** | Low |
+| **Status** | Verified |
+
+**Description**
+Redis pub/sub messages are delivered and gone, so there is nothing to inspect afterwards and generic
+tools (`MONITOR`, RedisInsight) show them as MessagePack binaries. For the faculty demo,
+`backend/scripts/watch-redis.js` (`npm run watch-redis`) subscribes to the adapter's channels,
+decodes each broadcast and prints it in plain words — which copy sent it, the event, who it is for,
+and the content — plus the shared two-factor counters as they change.
+
+**Changes Made**
+1. `socket/adapter.js`: on start-up each copy records `adapter uid → INSTANCE_NAME` in the Redis hash
+   `chatscale:copies` (7-day expiry), so the watcher can name the sender.
+2. `backend/scripts/watch-redis.js` (new) + `npm run watch-redis`; `--all` adds typing indicators and
+   inter-copy requests. `notepack.io` (MessagePack, already used by the adapter) listed as a direct dependency.
+3. Demo script `--fixed` banner shows how to open the watcher; `docs/DEMO.md` gains step 6b, the
+   watcher section, and the Supabase SQL query (with a warning not to open the `users` table on a projector);
+   `README.md` updated.
+
+**Finding surfaced by the watcher**
+Presence (`user:status`) also travels through Redis — one more cross-copy event that was silently
+per-copy before CHG-0023.
+
+**Verification**
+Two copies on a throwaway Valkey, watcher running: it listed `copy-A, copy-B` as registered and showed,
+in order, both users coming online, `copy-A → … message:new for channel:2 — alice_watch: "hello bob"`,
+`copy-A → … friend:request for user 5`, both going offline, and the 2FA counters reaching 5.
+
+**Files Added / Modified**
+- Added: `backend/scripts/watch-redis.js`
+- Modified: `backend/src/socket/adapter.js`, `backend/package.json`, `backend/package-lock.json`,
+  `scripts/demo-two-copies.sh`, `docs/DEMO.md`, `README.md`, `docs/CHANGE_LOG.md`
+
+**Rollback Plan**
+Delete the script and the `hSet` lines; nothing else depends on them.
+
+---
+
+### CHG-0025 — Unused Features and Tables Removed (Voice, Attachments, Direct Messages, Pins, Reactions)
+
+| Field | Value |
+|---|---|
+| **Change ID** | CHG-0025 |
+| **Date Raised** | 2026-09-27 |
+| **Date Implemented** | 2026-09-27 |
+| **Author** | Parth |
+| **Module / Component** | Schema; backend routes, controllers, services, socket; Supabase |
+| **Change Type** | Removal |
+| **Risk Level** | Low |
+| **Status** | Verified |
+| **Resolves** | CHG-0011 known limitation 1 (unauthenticated DM routes) |
+
+**Description**
+At the owner's request, tables and code for features the product does not have were removed, from
+the codebase and from the Supabase database. The product scope is: accounts (with 2FA), friends,
+spaces with text channels, messages, invite links and username invitations.
+
+**Removed**
+
+| Area | Tables | Code |
+|---|---|---|
+| Voice | `VoiceChannels`, `VoiceChannelParticipants` | `services/voiceChannelService.js`, `socket/voiceHandlers.js` |
+| Attachments | `Attachments` | `controllers/attachmentController.js`, `routes/attachmentRoutes.js`, `services/attachmentService.js` |
+| Direct messages | `DirectMessageChannels`, `DirectMessages`, `GroupDMUsers` | `controllers/dmController.js`, `routes/dmRoutes.js`, `services/dmService.js` — these routes had **no authentication** |
+| Pins, reactions | none existed | six endpoints in `messageRoutes.js` / `messageController.js` that called service functions which did not exist (would have returned 500) |
+| REST send | — | `POST /messages/channels/:id/messages` — it saved without notifying anyone live; messages are sent over the socket only, keeping one delivery path for the experiment |
+
+Kept: `GET` channel history and REST edit/delete. The upload middleware stays (still referenced by
+the unused server-icon and profile-picture routes).
+
+**Supabase**
+Guarded transaction: row count checked per table, abort if any held data. All six had **0 rows**;
+dropped. Before: 15 tables; after: 9 (`channels, friends, messages, recoverycodes, serverinvites,
+servermembers, servers, spaceinvitations, users`). Owner data unchanged: 2 users, 1 space, 9 messages.
+
+**Local SQLite** (`backend/data/chat.sqlite`) still contains the old tables and the seed's voice
+channel/DM rows; they are unused and harmless. Not modified.
+
+**Verification**
+- Fresh database created by the new schema: exactly the 9 tables above.
+- Suites on a scratch database: core 31/31, invitations 17/17, two-factor 24/24.
+- Removed endpoints (`/api/dms`, `/api/attachments/:id`, pin, REST send) return 404.
+- No remaining references to the removed tables or modules in `backend/src` or `server.js`.
+
+**Files Removed**
+- `backend/src/controllers/{attachment,dm}Controller.js`, `backend/src/routes/{attachment,dm}Routes.js`,
+  `backend/src/services/{attachment,dm,voiceChannel}Service.js`, `backend/src/socket/voiceHandlers.js`
+
+**Files Modified**
+- `backend/src/config/schema.js`, `backend/server.js`, `backend/src/socket/socket.js`,
+  `backend/src/controllers/messageController.js`, `backend/src/routes/messageRoutes.js`,
+  `backend/src/services/messageService.js`, `docs/CHANGE_LOG.md`
+
+**Rollback Plan**
+Restore the files from git; the tables are recreated automatically on the next start.
 
 ---
 

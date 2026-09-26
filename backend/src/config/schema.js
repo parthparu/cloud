@@ -65,19 +65,6 @@ const tables = [
     )
   `,
   `
-    CREATE TABLE IF NOT EXISTS Attachments (
-      AttachmentID INTEGER PRIMARY KEY AUTOINCREMENT,
-      MessageID INTEGER NOT NULL,
-      UserID INTEGER NOT NULL,
-      FileURL TEXT NOT NULL,
-      FileType TEXT,
-      FileSize INTEGER,
-      UploadDate TEXT,
-      FOREIGN KEY (MessageID) REFERENCES Messages(MessageID) ON DELETE CASCADE,
-      FOREIGN KEY (UserID) REFERENCES Users(UserID) ON DELETE CASCADE
-    )
-  `,
-  `
     CREATE TABLE IF NOT EXISTS ServerInvites (
       InviteID INTEGER PRIMARY KEY AUTOINCREMENT,
       ServerID INTEGER NOT NULL,
@@ -98,67 +85,6 @@ const tables = [
       FriendshipDate TEXT,
       FOREIGN KEY (UserID1) REFERENCES Users(UserID) ON DELETE CASCADE,
       FOREIGN KEY (UserID2) REFERENCES Users(UserID) ON DELETE CASCADE
-    )
-  `,
-  `
-    CREATE TABLE IF NOT EXISTS DirectMessageChannels (
-      ChannelID INTEGER PRIMARY KEY AUTOINCREMENT,
-      User1ID INTEGER,
-      User2ID INTEGER,
-      IsGroup INTEGER DEFAULT 0,
-      GroupName TEXT,
-      GroupIcon TEXT,
-      OwnerID INTEGER,
-      CreateDate TEXT,
-      FOREIGN KEY (User1ID) REFERENCES Users(UserID) ON DELETE CASCADE,
-      FOREIGN KEY (User2ID) REFERENCES Users(UserID) ON DELETE CASCADE,
-      FOREIGN KEY (OwnerID) REFERENCES Users(UserID) ON DELETE CASCADE
-    )
-  `,
-  `
-    CREATE TABLE IF NOT EXISTS DirectMessages (
-      MessageID INTEGER PRIMARY KEY AUTOINCREMENT,
-      ChannelID INTEGER NOT NULL,
-      UserID INTEGER NOT NULL,
-      MessageContent TEXT,
-      MessageDate TEXT,
-      FOREIGN KEY (ChannelID) REFERENCES DirectMessageChannels(ChannelID) ON DELETE CASCADE,
-      FOREIGN KEY (UserID) REFERENCES Users(UserID) ON DELETE CASCADE
-    )
-  `,
-  `
-    CREATE TABLE IF NOT EXISTS GroupDMUsers (
-      GroupDMUserID INTEGER PRIMARY KEY AUTOINCREMENT,
-      ChannelID INTEGER NOT NULL,
-      UserID INTEGER NOT NULL,
-      JoinDate TEXT,
-      UNIQUE(ChannelID, UserID),
-      FOREIGN KEY (ChannelID) REFERENCES DirectMessageChannels(ChannelID) ON DELETE CASCADE,
-      FOREIGN KEY (UserID) REFERENCES Users(UserID) ON DELETE CASCADE
-    )
-  `,
-  `
-    CREATE TABLE IF NOT EXISTS VoiceChannels (
-      VoiceChannelID INTEGER PRIMARY KEY AUTOINCREMENT,
-      ChannelID INTEGER,
-      ServerID INTEGER,
-      ChannelName TEXT,
-      CreateDate TEXT,
-      FOREIGN KEY (ChannelID) REFERENCES Channels(ChannelID) ON DELETE CASCADE,
-      FOREIGN KEY (ServerID) REFERENCES Servers(ServerID) ON DELETE CASCADE
-    )
-  `,
-  `
-    CREATE TABLE IF NOT EXISTS VoiceChannelParticipants (
-      ParticipantID INTEGER PRIMARY KEY AUTOINCREMENT,
-      VoiceChannelID INTEGER NOT NULL,
-      UserID INTEGER NOT NULL,
-      JoinTime TEXT,
-      LeaveTime TEXT,
-      IsMuted INTEGER DEFAULT 0,
-      IsDeafened INTEGER DEFAULT 0,
-      FOREIGN KEY (VoiceChannelID) REFERENCES VoiceChannels(VoiceChannelID) ON DELETE CASCADE,
-      FOREIGN KEY (UserID) REFERENCES Users(UserID) ON DELETE CASCADE
     )
   `,
   `
