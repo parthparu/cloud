@@ -31,6 +31,7 @@
 | CHG-0011 | 2026-09-26 | Parth | Frontend / Backend | Product frontend rebuilt (auth, friends, text channels, light/dark theme, non-Discord identity); 9 backend defects fixed incl. channel eavesdropping and Linux case-sensitivity crashes | Feature + Defect fix | Medium | Verified |
 | CHG-0012 | 2026-09-26 | Parth | Frontend / Docs | Legacy frontend files and Tailwind removed; frontend reorganised into one-component files by screen; README rewritten | Refactor / Removal | Low | Verified |
 | CHG-0013 | 2026-09-26 | Parth | Backend config | backend/.env untracked and ignored; JWT secret rotated; .env.example added | Security | Low | Implemented |
+| CHG-0014 | 2026-09-26 | Parth | Repository | Per-folder .gitignore files consolidated into one commented root .gitignore | Process | Low | Verified |
 ---
 
 ## 2. Detailed Entries
@@ -906,6 +907,43 @@ Hash comparison confirms the local secret no longer matches the committed one;
 
 **Rollback Plan**
 Not recommended. Restore `.gitignore` from git to re-expose the files.
+
+---
+
+### CHG-0014 — Single Root .gitignore
+
+| Field | Value |
+|---|---|
+| **Change ID** | CHG-0014 |
+| **Date Raised** | 2026-09-26 |
+| **Date Implemented** | 2026-09-26 |
+| **Author** | Parth |
+| **Module / Component** | Repository configuration |
+| **Change Type** | Process |
+| **Risk Level** | Low |
+| **Status** | Verified |
+| **Supersedes** | The `.gitignore` part of CHG-0013 |
+
+**Description**
+Ignore rules were split across `backend/.gitignore` and `frontend/.gitignore` (the Create React App
+default). They are consolidated into one commented root `.gitignore` for the new repository
+`parthparu/cloud`, and the two per-folder files are removed.
+
+**Covers:** dependencies; `.env` / `.env.*` (with `.env.example` explicitly kept); `backend/data/`
+and `backend/src/uploads/`; `frontend/build/` and coverage; logs; OS and editor files;
+`.claude/settings.local.json`; `graphify-out/`.
+
+**Files Added / Removed**
+- Added: `.gitignore`
+- Removed: `backend/.gitignore`, `frontend/.gitignore`
+- Modified: `docs/CHANGE_LOG.md`
+
+**Verification**
+`git check-ignore` confirms `backend/.env`, `backend/data/chat.sqlite`, both `node_modules`,
+`frontend/build/` and `.DS_Store` are ignored, and `backend/.env.example` is not.
+
+**Rollback Plan**
+Restore the two per-folder files from git and delete the root file.
 
 ---
 
