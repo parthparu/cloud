@@ -136,7 +136,7 @@ exports.createGroupDMChannel = async (channelData) => {
 exports.getGroupDMChannelById = async (channelId) => {
   try {
     const [rows] = await db.execute(
-      'SELECT * FROM DirectMessageChannels WHERE ChannelID = ? AND IsGroup = true',
+      'SELECT * FROM DirectMessageChannels WHERE ChannelID = ? AND IsGroup = 1',
       [channelId]
     );
     return rows;

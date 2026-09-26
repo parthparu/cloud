@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { NavLink, useMatch } from "react-router-dom";
-import { FiLogIn, FiLogOut, FiPlus, FiUsers } from "react-icons/fi";
+import { FiLogIn, FiLogOut, FiPlus, FiShield, FiUsers } from "react-icons/fi";
 import { APP_NAME } from "../config";
 import { useAuth } from "../context/AuthContext";
 import { useWorkspace } from "../context/WorkspaceContext";
@@ -10,6 +10,7 @@ import CreateChannelDialog from "../dialogs/CreateChannelDialog";
 import CreateSpaceDialog from "../dialogs/CreateSpaceDialog";
 import InviteDialog from "../dialogs/InviteDialog";
 import JoinSpaceDialog from "../dialogs/JoinSpaceDialog";
+import InvitationList from "./InvitationList";
 import SpaceItem from "./SpaceItem";
 
 const CONNECTION_LABEL = { online: "Live", connecting: "Connecting…", reconnecting: "Reconnecting…" };
@@ -49,6 +50,7 @@ export default function Sidebar() {
           </span>
         </div>
 
+        <InvitationList />
         {spaces === null && <p className="sidebar__note">Loading spaces…</p>}
         {spaces?.length === 0 && (
           <p className="sidebar__note">
@@ -71,6 +73,9 @@ export default function Sidebar() {
             {connection.node && connection.state === "online" && <span className="me__node"> · {connection.node}</span>}
           </span>
         </div>
+        <NavLink to="/settings/security" className="icon-button" title="Security settings" aria-label="Security settings">
+          <FiShield />
+        </NavLink>
         <button type="button" className="icon-button" onClick={logout} title="Sign out" aria-label="Sign out">
           <FiLogOut />
         </button>

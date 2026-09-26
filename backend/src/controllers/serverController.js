@@ -1,7 +1,6 @@
 // controllers/serverController.js
 const crypto = require('crypto');
 const serverService = require('../services/serverService');
-const inviteDelivery = require('../services/inviteDelivery');
 const fs = require('fs');
 
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
@@ -234,36 +233,6 @@ exports.createInvite = async (req, res, next) => {
         expires: expiryDate
       }
     });
-  } catch (error) {
-    next(error);
-  }
-};
-
-// Send an invite by email — placeholder until a delivery provider is chosen
-exports.sendInvite = async (req, res, next) => {
-  try {
-    const { serverId } = req.params;
-    const email = String(req.body.email || '').trim();
-    const inviteCode = String(req.body.inviteCode || '').trim();
-    const userId = req.user.id;
-    
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      return res.status(400).json({ message: 'Enter a valid email address' });
-    }
-    
-    const isMember = await serverService.isServerMember(serverId, userId);
-    if (!isMember) {
-      return res.status(403).json({ message: 'You are not a member of this server' });
-    }
-    
-    const invites = await serverService.getInviteByCode(inviteCode);
-    if (invites.length === 0 || String(invites[0].ServerID) !== String(serverId)) {
-      return res.status(404).json({ message: 'Invalid invite code' });
-    }
-    
-    const result = await inviteDelivery.sendInviteEmail({ to: email, inviteCode, serverId });
-    
-    res.status(result.delivered ? 200 : 202).json(result);
   } catch (error) {
     next(error);
   }

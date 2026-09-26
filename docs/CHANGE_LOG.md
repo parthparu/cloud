@@ -32,6 +32,14 @@
 | CHG-0012 | 2026-09-26 | Parth | Frontend / Docs | Legacy frontend files and Tailwind removed; frontend reorganised into one-component files by screen; README rewritten | Refactor / Removal | Low | Verified |
 | CHG-0013 | 2026-09-26 | Parth | Backend config | backend/.env untracked and ignored; JWT secret rotated; .env.example added | Security | Low | Implemented |
 | CHG-0014 | 2026-09-26 | Parth | Repository | Per-folder .gitignore files consolidated into one commented root .gitignore | Process | Low | Verified |
+| CHG-0015 | 2026-09-26 | Parth | Auth (backend + frontend) | Optional two-step verification with authenticator apps (TOTP), recovery codes, encrypted secrets, replay and brute-force protection | Feature (security) | Medium | Verified |
+| CHG-0016 | 2026-09-26 | Parth | Socket layer / Experiment | Scaling failure reproduced with two local backend copies; instance naming and per-copy delivery logging | Experiment | Low | Verified |
+| CHG-0017 | 2026-09-26 | Parth | Backend data layer | PostgreSQL support behind DATABASE_URL (Supabase-ready), shared schema, RLS on all tables, safe seeding; mysql2/bcrypt removed | Feature / Refactor | Medium | Verified locally |
+| CHG-0018 | 2026-09-26 | Parth | Demo tooling / SQLite | One-command two-copy demo script and faculty guide; fixed SQLite lock and duplicate-seed races on simultaneous start | Tooling + Defect fix | Low | Verified |
+| CHG-0019 | 2026-09-26 | Parth | PostgreSQL driver | Concurrent schema creation crashed a copy on Supabase; setup now serialised with an advisory lock | Defect fix | Low | Verified |
+| CHG-0020 | 2026-09-26 | Parth | Invitations (backend + frontend) | Invite to a space by username; live sidebar invitations with accept/decline; blocks not revealed | Feature | Low | Verified |
+| CHG-0021 | 2026-09-26 | Parth | Invites / Demo / Process | Email invite placeholder removed; demo reload pitfall documented; incident: test data written to Supabase, prevention added | Removal + Incident | Low | Implemented |
+| CHG-0022 | 2026-09-26 | Parth | Supabase data | Incident closed: 11 test users and 3 test spaces deleted from Supabase with owner approval; owner data verified intact | Data cleanup | Low | Verified |
 ---
 
 ## 2. Detailed Entries
@@ -944,6 +952,462 @@ and `backend/src/uploads/`; `frontend/build/` and coverage; logs; OS and editor 
 
 **Rollback Plan**
 Restore the two per-folder files from git and delete the root file.
+
+---
+
+### CHG-0015 — Two-Step Verification (Authenticator App) Added
+
+| Field | Value |
+|---|---|
+| **Change ID** | CHG-0015 |
+| **Date Raised** | 2026-09-26 |
+| **Date Implemented** | 2026-09-26 |
+| **Author** | Parth |
+| **Module / Component** | Backend auth; frontend sign-in and new Security settings page |
+| **Change Type** | Feature (security) |
+| **Risk Level** | Medium (changes the sign-in path) |
+| **Status** | Verified |
+
+**Description**
+Optional per-account two-step verification using time-based one-time passwords (TOTP, RFC 6238) —
+the six-digit codes shown by Google Authenticator, 1Password, Authy and similar. Chosen over SMS
+(paid) and email codes (no email provider yet, see CHG-0011) because it is free, works offline and
+is the industry default.
+
+**Design**
+
+| Concern | Decision |
+|---|---|
+| Algorithm | RFC 6238, HMAC-SHA1, 30 s steps, 6 digits, ±1 step drift. Implemented on `node:crypto` (~70 lines) rather than a dependency; verified against the RFC 6238 test vector |
+| Sign-in | Password step returns a 5-minute `typ: 2fa` challenge JWT, not a session. `POST /auth/login/2fa` exchanges it plus a code for an access token. `utils/tokens.js` makes the REST middleware and socket handshake reject challenge tokens |
+| Secret storage | AES-256-GCM (`utils/secretBox.js`) keyed by new env var `TWO_FACTOR_KEY`; a copied database alone cannot generate codes. Placeholder or short keys are refused |
+| Replay | Last accepted time step stored per user; reusing a code is refused with a distinct "wait for a new code" message and is not counted as a failure |
+| Brute force | 5 wrong codes per challenge, then restart; 10 per account per 15 minutes across challenges |
+| Recovery | 10 single-use codes (`xxxxx-xxxxx`, no ambiguous characters), SHA-256 hashed, shown once; remaining count shown in settings, warning at ≤ 2 |
+| Sensitive changes | Turning 2FA off or regenerating recovery codes requires the password **and** a current or recovery code |
+
+**Changes Made — backend**
+- New: `utils/totp.js`, `utils/secretBox.js`, `utils/tokens.js`, `services/twoFactorService.js`,
+  `controllers/twoFactorController.js`.
+- `config/db.js`: columns `Users.TwoFactorSecret`, `TwoFactorEnabled`, `TwoFactorLastStep` and table
+  `RecoveryCodes`, via an idempotent add-missing-columns migration so existing databases upgrade in
+  place (already applied to the local `chat.sqlite`; additive only).
+- `authController.js`: login branches on 2FA; JWT creation moved to `utils/tokens.js`; `/auth/me`
+  and sign-in responses include `twoFactorEnabled`.
+- `middleware/auth.js`, `socket/socket.js`: use `verifyAccessToken`.
+- Routes: `POST /auth/login/2fa`, `GET /auth/2fa`, `POST /auth/2fa/{setup,enable,disable,recovery-codes}`.
+- Dependency: `qrcode` (server-side QR PNG returned as a data URL).
+- `.env.example` documents `TWO_FACTOR_KEY`; a random key was generated into the local `.env`.
+
+**Changes Made — frontend**
+- `pages/auth/TwoFactorStep.js`; `LoginPage.js` shows it after the password step (authenticator code
+  or recovery code; returns to the password step when the challenge is spent).
+- `pages/settings/`: `SecurityPage`, `TwoFactorSetup` (QR, manual key, confirm), `RecoveryCodes`
+  (copy, download .txt, "I've saved them" gate), `ConfirmIdentityForm`.
+- Route `/settings/security`; shield link in the sidebar footer; `styles/settings.css`.
+- `AuthContext`: `login` reports when a code is required; adds `completeTwoFactor`, `updateUser`.
+  `ApiError` now carries the response body (used for the server's `restart` flag).
+
+**Files Added**
+- `backend/src/utils/{totp,secretBox,tokens}.js`, `backend/src/services/twoFactorService.js`,
+  `backend/src/controllers/twoFactorController.js`
+- `frontend/src/pages/auth/TwoFactorStep.js`, `frontend/src/pages/settings/*`, `frontend/src/styles/settings.css`
+
+**Files Modified**
+- Backend: `config/db.js`, `controllers/authController.js`, `middleware/auth.js`, `routes/authRoutes.js`,
+  `socket/socket.js`, `package.json`, `package-lock.json`, `.env.example`
+- Frontend: `App.js`, `context/AuthContext.js`, `lib/api.js`, `layout/Sidebar.js`,
+  `pages/auth/{AuthLayout,LoginPage}.js`, `styles/index.css`
+- `README.md`, `docs/CHANGE_LOG.md`
+
+**Verification**
+- RFC 6238 test vector passes; AES-GCM round-trip passes.
+- 2FA API test on a throwaway database: **24/24** — setup and QR, enable, challenge-only password
+  step, challenge token refused by REST and socket, wrong-code countdown, success, reuse refused
+  with a clear message, recovery code (case-insensitive) and single use, both attempt caps, disable
+  and regenerate gated on password + code, non-2FA users unaffected.
+- Original backend suite re-run: **32/32**.
+- Browser: enabled via the Security page, recovery-code gate, sign out, wrong code
+  ("4 tries left"), correct code returns to the originating page, recovery-code sign-in decrements
+  the remaining count.
+- `react-scripts build` clean.
+
+**Known Limitations**
+1. Attempt counters live in process memory: they reset on restart and become per-pod once the
+   backend scales out. Move to Redis alongside the Socket.IO adapter in PLAN.md Phase 3.
+2. No "trust this device" option — every sign-in asks for a code.
+3. Rotating `TWO_FACTOR_KEY` makes stored secrets unreadable; affected users would need 2FA reset.
+
+**Rollback Plan**
+Revert the listed files. The added columns and table are ignored by the old code and can stay.
+
+**Follow-up Actions Raised**
+1. PLAN.md Phase 3: move the attempt-limiter state to Redis.
+2. Offer email codes as an alternative second factor once an email provider exists (CHG-0011).
+
+---
+
+### CHG-0016 — Scaling Failure Reproduced with Two Backend Copies (Local)
+
+| Field | Value |
+|---|---|
+| **Change ID** | CHG-0016 |
+| **Date Raised** | 2026-09-26 |
+| **Date Implemented** | 2026-09-26 |
+| **Author** | Parth |
+| **Module / Component** | Socket layer (instrumentation); experiment evidence |
+| **Change Type** | Experiment + Instrumentation |
+| **Risk Level** | Low |
+| **Status** | Verified |
+| **Advances** | PLAN.md Phase 3a (reproduced on a laptop ahead of the Kubernetes version) |
+
+**Description**
+The core failure of the thesis was reproduced without containers: two backend processes
+(`copy-A` :5001, `copy-B` :5002) sharing one database, two browsers each connected to a different
+copy. A message sent through `copy-A` was stored in the database and delivered to `copy-A`'s own
+socket only; the user on `copy-B` never received it live. Full record in
+`docs/evidence/01-two-copies-break.md`.
+
+**Changes Made**
+1. `config/instance.js` (new): `INSTANCE_NAME` env var, defaulting to the hostname (a pod's name
+   under Kubernetes). Kept in its own module to avoid a circular import between `socket.js` and
+   `messageHandlers.js`.
+2. `session:ready` reports the instance name, so the app's "Live · …" badge distinguishes copies on one machine.
+3. Connect/disconnect logs are prefixed with the instance name; each broadcast logs how many
+   sockets **this** copy delivered to — the evidence that other copies are never reached.
+
+**Files Added / Modified**
+- Added: `backend/src/config/instance.js`, `docs/evidence/01-two-copies-break.md`
+- Modified: `backend/src/socket/socket.js`, `backend/src/socket/messageHandlers.js`, `README.md`, `docs/CHANGE_LOG.md`
+
+**Verification**
+Browser run: ava on `copy-A` ("Live · copy-A"), milo on `copy-B` ("Live · copy-B"). ava's
+message appeared for ava only; `copy-A` logged `delivered to 1 socket(s) on this copy`; `copy-B`
+logged nothing; the row was present in `Messages` (ID 3).
+
+**Rollback Plan**
+Revert the two socket files; the logging has no functional effect.
+
+---
+
+### CHG-0017 — PostgreSQL Support (Supabase-Ready); Database Layer Split by Driver
+
+| Field | Value |
+|---|---|
+| **Change ID** | CHG-0017 |
+| **Date Raised** | 2026-09-26 |
+| **Date Implemented** | 2026-09-26 |
+| **Author** | Parth |
+| **Module / Component** | Backend data layer; server start-up |
+| **Change Type** | Feature / Refactor |
+| **Risk Level** | Medium (every query now runs through a translation layer on PostgreSQL) |
+| **Status** | Verified locally — Supabase connection pending owner's project setup |
+| **Advances** | PLAN.md Phase 2 (blocker B-2: per-machine SQLite) |
+
+**Description**
+The backend can now run on PostgreSQL, chosen by `DATABASE_URL`; without it, the local SQLite file
+is used as before. This removes blocker B-2 (each copy on a separate machine would have its own
+database) and lets the project use **Supabase** as a free managed PostgreSQL. Only Supabase's
+database is used: its Realtime would replace Socket.IO (the subject of the experiment) and its Auth
+would duplicate CHG-0011/CHG-0015.
+
+**Design**
+
+| Concern | Decision |
+|---|---|
+| One code path | Services are unchanged. Both drivers implement the existing mysql2-style `execute(sql, params)` → `[rows]` / `[{ insertId, affectedRows }]` |
+| Placeholders | `?` → `$1..$n` in the PostgreSQL driver |
+| Insert IDs | `RETURNING <primary key>` appended to INSERTs; keys read from the shared schema |
+| Identifier case | PostgreSQL folds unquoted names to lower case. Rows are renamed back to their schema spelling (`userid` → `UserID`) and to any `AS Alias` in the query — no query rewrites needed |
+| Schema | Written once (`config/schema.js`, SQLite dialect); PostgreSQL gets `GENERATED BY DEFAULT AS IDENTITY` for auto-increment. Added columns use `ADD COLUMN IF NOT EXISTS` |
+| Supabase public API | Supabase exposes the `public` schema over REST. Every table gets **row-level security** with no policies, so that API can read nothing; the backend connects as the table owner, which RLS does not restrict |
+| Demo data | Seeded by default only for SQLite. Never for PostgreSQL unless `SEED_DEMO_DATA=true` — the demo password is in source |
+| TLS | Required for remote hosts. `DATABASE_CA_CERT` enables certificate verification; without it the connection is encrypted but unverified, and the start-up log says so |
+| Start-up | `.env` now loads before any module (previously after, so `SQLITE_PATH` from `.env` was silently ignored); the server listens only after `db.ready` resolves |
+| Credentials in logs | Only host, port and database name are ever logged |
+
+**Also changed**
+- `dmService.js`: `IsGroup = true` → `IsGroup = 1` (integer/boolean comparison is an error in PostgreSQL).
+- Seed no longer creates a voice channel or DM (neither is part of the product); seed text neutralised.
+- Removed unused dependencies `mysql2` (PLAN.md P-03) and `bcrypt` (only `bcryptjs` is used). Added `pg`.
+- `.env.example` documents `DATABASE_URL`, `DATABASE_CA_CERT`, `SEED_DEMO_DATA`; `.gitignore` ignores `backend/certs/`.
+
+**Files Added**
+- `backend/src/config/schema.js`, `backend/src/config/seed.js`, `backend/src/config/db/sqlite.js`, `backend/src/config/db/postgres.js`
+
+**Files Modified**
+- `backend/src/config/db.js` (now a 20-line driver selector), `backend/server.js`,
+  `backend/src/services/dmService.js`, `backend/package.json`, `backend/package-lock.json`,
+  `backend/.env.example`, `.gitignore`, `README.md`, `docs/CHANGE_LOG.md`
+
+**Verification**
+- Local PostgreSQL 16 (throwaway Docker container, since removed): original suite **32/32**,
+  two-factor suite **24/24**; no demo users created; RLS enabled on **14 of 14** tables.
+- SQLite: both suites re-run, **32/32** and **24/24**; demo data seeded.
+- The two running copies (`copy-A`, `copy-B`) restarted on the new layer against the existing
+  `chat.sqlite` without data loss.
+
+**Known Limitations**
+1. Dates remain ISO-8601 `TEXT` (not `TIMESTAMPTZ`) to keep both dialects identical; revisit if
+   time-based queries are needed.
+2. No data migration from the local SQLite file — a Supabase database starts empty.
+3. The `?` → `$n` rewrite assumes no literal `?` inside SQL strings (true for every current query).
+
+**Rollback Plan**
+Unset `DATABASE_URL` to return to SQLite immediately. To revert the code, restore the previous
+`config/db.js` and `server.js` from git.
+
+**Follow-up Actions Raised**
+1. Owner: create the Supabase project and set `DATABASE_URL` (steps given in the session).
+2. Download Supabase's CA certificate and set `DATABASE_CA_CERT` to verify the connection.
+
+---
+
+### CHG-0018 — Faculty Demo Script and Guide; Two Start-up Races Fixed
+
+| Field | Value |
+|---|---|
+| **Change ID** | CHG-0018 |
+| **Date Raised** | 2026-09-26 |
+| **Date Implemented** | 2026-09-26 |
+| **Author** | Parth |
+| **Module / Component** | Demo tooling; SQLite driver; seed |
+| **Change Type** | Tooling + Defect fix |
+| **Risk Level** | Low |
+| **Status** | Verified |
+
+**Description**
+Packages the two-copy failure (CHG-0016) as a repeatable five-minute presentation for faculty, and
+fixes two defects found while making it reliable.
+
+**Changes Made**
+1. `scripts/demo-two-copies.sh`: one command starts `copy-A` (:5001) + frontend :3000 and `copy-B`
+   (:5002) + frontend :3001; refuses to start if a port is busy; shows only instance-tagged and
+   database lines; full logs to `.demo-logs/` (git-ignored); Ctrl-C stops every process it started.
+2. `docs/DEMO.md`: preparation, projector layout, a step-by-step script with what to say, how to show
+   the stored row (SQLite or Supabase Table Editor), likely questions with answers, troubleshooting.
+3. **Defect — "database is locked" on simultaneous start.** Observed live: `copy-B` crashed at
+   start-up (`ERR_SQLITE_ERROR`, errcode 261) when both copies opened the shared SQLite file at once.
+   Fix: 5-second busy timeout (`DatabaseSync({ timeout })` + `PRAGMA busy_timeout`).
+4. **Defect — duplicate seed on a fresh database.** Found by stress test: two copies starting on
+   an empty database both attempted to seed; the loser crashed on `UNIQUE(Users.Email)`, stopping
+   the server. Fix: the first user insert decides the winner; a unique-constraint error there
+   (SQLite message or PostgreSQL `23505`) means another copy seeded, and this copy continues.
+
+**Files Added / Modified**
+- Added: `scripts/demo-two-copies.sh`, `docs/DEMO.md`
+- Modified: `backend/src/config/db/sqlite.js`, `backend/src/config/seed.js`, `.gitignore`,
+  `README.md`, `docs/CHANGE_LOG.md`
+
+**Verification**
+- Demo script run in the terminal panel: both copies and frontends up, "Ready." banner, existing
+  browser sessions reconnected (`[copy-A] … ava`, `[copy-B] … milo`).
+- Stress test: 10 rounds × 4 processes starting simultaneously on a fresh SQLite file — before the
+  fixes, lock and duplicate-seed failures; after, **0 failures**, demo data created exactly once
+  (3 users, 1 space, 2 messages).
+
+**Rollback Plan**
+Delete the script and guide; revert the two backend files.
+
+---
+
+### CHG-0019 — PostgreSQL Schema Setup Serialised Across Copies
+
+| Field | Value |
+|---|---|
+| **Change ID** | CHG-0019 |
+| **Date Raised** | 2026-09-26 |
+| **Date Implemented** | 2026-09-26 |
+| **Author** | Parth |
+| **Module / Component** | PostgreSQL driver (`config/db/postgres.js`) |
+| **Change Type** | Defect fix |
+| **Risk Level** | Low |
+| **Status** | Verified |
+| **Related** | CHG-0017, CHG-0018 (same class of race, SQLite) |
+
+**Description**
+First run of the demo script against **Supabase** (both copies starting together on an empty
+database): `copy-A` created the schema; `copy-B` exited with
+`duplicate key value violates unique constraint "pg_class_relname_nsp_index"`. Concurrent
+`CREATE TABLE IF NOT EXISTS` is not atomic in PostgreSQL — both sessions pass the existence check,
+and the second fails on the system catalog.
+
+**Fix**
+Schema setup runs on one dedicated connection holding a session-level advisory lock
+(`pg_advisory_lock(7310001)`); other copies block until it is released, then find every table
+present. Released in `finally`. Session-mode poolers (Supabase *Session pooler*) support this.
+
+**Finding for the report**
+Starting several copies at once is the normal case under Kubernetes (a Deployment starts replicas
+in parallel), so start-up must be safe under concurrency — not only request handling. Kubernetes
+alternatives (an init Job or a separate migration step) are noted for PLAN.md Phase 3.
+
+**Files Modified**
+- `backend/src/config/db/postgres.js`, `docs/CHANGE_LOG.md`
+
+**Verification**
+Local PostgreSQL 16 (throwaway container): 8 rounds × 4 processes starting simultaneously on a
+freshly emptied schema — **0 failures**, 14/14 tables each round. Supabase connection confirmed from
+`copy-A`'s log (`aws-0-ap-south-1.pooler.supabase.com`, TLS).
+
+**Rollback Plan**
+Revert `init()` to per-statement `pool.query`; start copies one at a time.
+
+---
+
+### CHG-0020 — Invite to a Space by Username
+
+| Field | Value |
+|---|---|
+| **Change ID** | CHG-0020 |
+| **Date Raised** | 2026-09-26 |
+| **Date Implemented** | 2026-09-26 |
+| **Author** | Parth |
+| **Module / Component** | Backend invitations API; sidebar; invite dialog |
+| **Change Type** | Feature |
+| **Risk Level** | Low |
+| **Status** | Verified |
+| **Relates to** | CHG-0011 (invite link + email placeholder) |
+
+**Description**
+Members can invite a specific person to a space by username — a free, in-app alternative to the
+email placeholder. The person must accept; nobody is added to a space without consent.
+
+**Behaviour**
+- Invite dialog: **Invite by username** first (friends offered as suggestions), then the share
+  link, then the email placeholder.
+- The invitee gets `invitation:new` over their socket; the invitation appears at the top of their
+  sidebar with ✓ (join, opens the space) and ✕ (decline).
+- Rules: only members can invite; no self-invites; no invitations to existing members; one
+  pending invitation per person per space; re-inviting after a decline is allowed.
+- Blocks: if either person has blocked the other, the response is the same generic
+  "Couldn't invite …" as for an unknown username, so a block is never revealed.
+- Only the invitee can accept or decline (others get 404).
+
+**Changes Made**
+- Schema: table `SpaceInvitations` (`UNIQUE(ServerID, InviteeID)`, cascades on space/user delete);
+  a row exists only while pending.
+- Backend: `services/invitationService.js`, `controllers/invitationController.js`,
+  `routes/invitationRoutes.js` mounted at `/api/invitations` (`GET /`, `POST /`,
+  `POST /:id/accept`, `DELETE /:id`) — a separate prefix so nothing collides with `/servers/:serverId`.
+- Frontend: `WorkspaceContext` holds invitations (loaded on sign-in, updated live);
+  `layout/InvitationList.js`; `dialogs/InviteByUsername.js`; styles in `layout.css`.
+- `docs/DEMO.md` preparation simplified to invite-by-username; `README.md` updated.
+
+**Files Added**
+- `backend/src/services/invitationService.js`, `backend/src/controllers/invitationController.js`,
+  `backend/src/routes/invitationRoutes.js`, `frontend/src/layout/InvitationList.js`,
+  `frontend/src/dialogs/InviteByUsername.js`
+
+**Files Modified**
+- `backend/src/config/schema.js`, `backend/server.js`, `frontend/src/context/WorkspaceContext.js`,
+  `frontend/src/layout/Sidebar.js`, `frontend/src/dialogs/InviteDialog.js`,
+  `frontend/src/styles/layout.css`, `docs/DEMO.md`, `README.md`, `docs/CHANGE_LOG.md`
+
+**Verification**
+- Invitation API suite **17/17 on SQLite and 17/17 on PostgreSQL**: case-insensitive username,
+  live socket notification, duplicate/self/member/non-member rules, generic response for unknown
+  and blocked users, only the invitee can accept, membership only after accepting, decline and re-invite.
+- Regression on both databases: core 32/32, two-factor 24/24.
+- Browser: invitation appeared in the sidebar without refresh; ✓ joined and opened
+  Demo Day #general; invite dialog suggested a friend, focused the username field, and sent the
+  invitation (confirmed from the invitee's side).
+- `react-scripts build` clean.
+
+**Rollback Plan**
+Remove the route mount and the new files; the table can stay.
+
+---
+
+### CHG-0021 — Email Invite Placeholder Removed; Demo Guidance; Test Data Written to Supabase (Incident)
+
+| Field | Value |
+|---|---|
+| **Change ID** | CHG-0021 |
+| **Date Raised** | 2026-09-26 |
+| **Date Implemented** | 2026-09-26 |
+| **Author** | Parth |
+| **Module / Component** | Invite dialog; server routes; demo guide; test procedure |
+| **Change Type** | Removal + Incident record |
+| **Risk Level** | Low |
+| **Status** | Implemented — test-data cleanup in Supabase pending owner approval |
+| **Supersedes** | Email placeholder from CHG-0011 |
+
+**1. Email invite removed (owner request)**
+Invite by username (CHG-0020) replaces it. Removed: the "Send by email" section of the invite
+dialog, `POST /servers/:serverId/invites/send`, `serverController.sendInvite`,
+`services/inviteDelivery.js`, and the now-unused `.placeholder-block` and `.badge` styles.
+The invite dialog is now: invite by username, or share a link.
+
+**2. "It's not broken any more" — investigated, still broken (as intended)**
+Owner observed Bob seeing Alice's message in the demo. Logs showed every broadcast still
+`delivered to 1 socket(s) on this copy`, with repeated `User disconnected` / `User connected`
+pairs for both users: the pages were **reloading** (frontend hot-reload during code edits, and
+Chrome sleeping/reloading background tabs, as Alice and Bob were tabs in one window). A reload
+reads history from the database, so the message appeared without having been delivered live.
+`docs/DEMO.md` now requires two side-by-side windows, no refreshing until step 8, and no code
+edits during the demo; its troubleshooting table explains how to recognise a reload in the logs.
+The same session's `Request failed (404)` came from demo backends started before
+`/api/invitations` existed (backends don't hot-reload); added to troubleshooting.
+
+**3. Incident: automated test data written to the owner's Supabase database**
+- **What:** After the owner added `DATABASE_URL` to `backend/.env`, test servers started for
+  CHG-0020 and this change loaded `.env` and connected to **Supabase** instead of a throwaway
+  SQLite file (`SQLITE_PATH` alone doesn't select SQLite once `DATABASE_URL` is set).
+- **Impact:** 11 test users (`inv_*`, `*_t`, `ui_*`) and 3 test spaces ("Demo Day" ×2,
+  "Test Space") with their channels, messages and invitations were created in Supabase. The
+  owner's data (users `alice`, `bob`; space "demo day") was not modified and no test user joined it.
+- **Correction to CHG-0020:** its "17/17 on SQLite" run actually ran against Supabase
+  (PostgreSQL). The suites have now been re-run on genuine local SQLite: core 31/31,
+  invitations 17/17, two-factor 24/24.
+- **Prevention:** test servers are now started with `DATABASE_URL=` (empty), which forces
+  SQLite regardless of `.env`; the start-up line `[db] ready: SQLite (…)` is checked before tests run.
+- **Cleanup:** listed to the owner; deletion awaits approval.
+
+**Files Modified / Removed**
+- Removed: `backend/src/services/inviteDelivery.js`
+- Modified: `frontend/src/dialogs/InviteDialog.js`, `frontend/src/styles/modal.css`,
+  `frontend/src/styles/controls.css`, `backend/src/routes/serverRoutes.js`,
+  `backend/src/controllers/serverController.js`, `docs/DEMO.md`, `README.md`, `docs/CHANGE_LOG.md`
+
+**Verification**
+`react-scripts build` clean; suites on local SQLite all pass (above); the removed endpoint returns 404.
+
+---
+
+### CHG-0022 — Incident Closed: Test Data Removed from Supabase
+
+| Field | Value |
+|---|---|
+| **Change ID** | CHG-0022 |
+| **Date Raised** | 2026-09-26 |
+| **Date Implemented** | 2026-09-26 |
+| **Author** | Parth |
+| **Module / Component** | Supabase database (data only) |
+| **Change Type** | Data cleanup |
+| **Risk Level** | Low |
+| **Status** | Verified |
+| **Closes** | CHG-0021 §3 |
+
+**Description**
+With the owner's approval, the test data written to Supabase (CHG-0021) was deleted in a single
+transaction. Guards, each of which would have rolled back everything: exactly 11 named test users
+found; exactly 3 spaces owned by them; no membership or channel of a test user in any other space.
+
+**Deleted**
+- Users: `inv_alice`, `inv_bob`, `inv_carl`, `inv_dora`, `alice_t`, `bob_t`, `erin_t`, `finn_t`,
+  `ui_alice`, `ui_bob`, `ui_carl` (their friendships, memberships, messages, invitations and
+  recovery codes removed by cascade).
+- Spaces: "Demo Day" #2, "Test Space" #3, "Demo Day" #4 (channels, messages, invite links,
+  invitations by cascade).
+
+**State afterwards (verified by query)**
+Users `alice`, `bob`; one space, "demo day" (owner bob, 2 members, 2 messages); 1 friendship;
+0 pending invitations; 5 invite links (all for "demo day"); 0 recovery codes. Counts before:
+13 users, 4 spaces, 2 messages — the owner's messages were unaffected.
+
+**Rollback Plan**
+None needed; the deleted rows were test data only.
 
 ---
 

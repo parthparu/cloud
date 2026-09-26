@@ -36,8 +36,23 @@ export function AuthProvider({ children }) {
     setStatus("signedIn");
   };
 
-  const login = async (email, password) =>
-    acceptSession(await api("/auth/login", { method: "POST", body: { email, password } }));
+  // Resolves to { twoFactorRequired, challengeToken } when a code is still needed,
+  // otherwise signs in and resolves to { twoFactorRequired: false }
+  const login = async (email, password) => {
+    const result = await api("/auth/login", { method: "POST", body: { email, password } });
+    if (result.twoFactorRequired) {
+      return { twoFactorRequired: true, challengeToken: result.challengeToken };
+    }
+    acceptSession(result);
+    return { twoFactorRequired: false };
+  };
+
+  // Second sign-in step: an authenticator code or a recovery code
+  const completeTwoFactor = async (challengeToken, code) =>
+    acceptSession(await api("/auth/login/2fa", { method: "POST", body: { challengeToken, code } }));
+
+  // Keep the cached user in step after 2FA is turned on or off in settings
+  const updateUser = (changes) => setUser((current) => (current ? { ...current, ...changes } : current));
 
   const register = async (username, email, password) =>
     acceptSession(await api("/auth/register", { method: "POST", body: { username, email, password } }));
@@ -52,7 +67,7 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, token, status, login, register, logout }}>
+    <AuthContext.Provider value={{ user, token, status, login, completeTwoFactor, register, logout, updateUser }}>
       {children}
     </AuthContext.Provider>
   );

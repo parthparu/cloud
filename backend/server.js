@@ -1,7 +1,9 @@
+// Load .env before anything reads process.env (the database driver is chosen at require time)
+require('dotenv').config();
+
 const express = require('express');
 const http = require('http');
 const cors = require('cors');
-const dotenv = require('dotenv');
 const morgan = require('morgan');
 const { initializeSocket } = require('./src/socket/socket');
 const errorHandler = require('./src/middleware/errorHandler');
@@ -15,8 +17,7 @@ const messageRoutes = require('./src/routes/messageRoutes');
 const friendRoutes = require('./src/routes/friendRoutes');
 const attachmentRoutes = require('./src/routes/attachmentRoutes');
 const dmRoutes = require('./src/routes/dmRoutes');
-
-dotenv.config();
+const invitationRoutes = require('./src/routes/invitationRoutes');
 
 const app = express();
 const server = http.createServer(app);
@@ -28,15 +29,6 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan('dev'));
 
-db.getConnection()
-  .then(connection => {
-    console.log('Database connected successfully');
-    connection.release();
-  })
-  .catch(err => {
-    console.error('Database connection error:', err);
-  });
-
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/servers', serverRoutes);
@@ -45,13 +37,23 @@ app.use('/api/messages', messageRoutes);
 app.use('/api/friends', friendRoutes);
 app.use('/api/attachments', attachmentRoutes);
 app.use('/api/dms', dmRoutes);
+app.use('/api/invitations', invitationRoutes);
 
 app.use(errorHandler);
 
 const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+
+// Accept traffic only once the database is ready (tables created, connection working)
+db.ready
+  .then(() => {
+    server.listen(PORT, () => {
+      console.log(`Server running on port ${PORT}`);
+    });
+  })
+  .catch((err) => {
+    console.error('[db] could not start:', err.message);
+    process.exit(1);
+  });
 
 process.on('unhandledRejection', (err) => {
   console.error('Unhandled Rejection:', err);

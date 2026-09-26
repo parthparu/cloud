@@ -23,9 +23,6 @@ router.delete('/:serverId', auth, serverController.deleteServer);
 // Create server invite
 router.post('/:serverId/invites', auth, serverController.createInvite);
 
-// Send invite by email (placeholder delivery)
-router.post('/:serverId/invites/send', auth, serverController.sendInvite);
-
 // Preview an invite
 router.get('/invites/:inviteCode', auth, serverController.getInvite);
 

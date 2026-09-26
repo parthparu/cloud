@@ -223,3 +223,52 @@
 .me__node {
   color: var(--ink-3);
 }
+
+/* ---------- Invitations (top of the space list) ---------- */
+
+.invitations {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.invitation {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px 6px 10px;
+  border: 1px dashed var(--accent);
+  border-radius: var(--radius);
+  background: var(--accent-soft);
+}
+
+.invitation__icon {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+.invitation__text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+
+.invitation__space {
+  font-weight: 500;
+  font-size: 0.9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.invitation__from {
+  font-size: 0.78rem;
+  color: var(--ink-3);
+}
+
+.invitation__accept {
+  color: var(--accent);
+}

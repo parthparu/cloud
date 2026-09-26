@@ -1,4 +1,4 @@
-const jwt = require('jsonwebtoken');
+const { verifyAccessToken } = require('../utils/tokens');
 const userService = require('../services/userService');
 
 module.exports = async (req, res, next) => {
@@ -11,7 +11,7 @@ module.exports = async (req, res, next) => {
     }
     
     // Verify token
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = verifyAccessToken(token);
     
     // Check if user exists
     const users = await userService.getUserById(decoded.id);

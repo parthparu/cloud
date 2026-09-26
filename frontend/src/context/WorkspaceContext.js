@@ -16,6 +16,8 @@ export function WorkspaceProvider({ children }) {
   const [channelsBySpace, setChannelsBySpace] = useState({});
   const [friendsVersion, setFriendsVersion] = useState(0);
   const [presence, setPresence] = useState({});
+  // Pending invitations to spaces, addressed to this user by username
+  const [invitations, setInvitations] = useState([]);
   const joinedSpaces = useRef(new Set());
 
   useEffect(() => {
@@ -38,6 +40,10 @@ export function WorkspaceProvider({ children }) {
     s.on("friend:request", bumpFriends);
     s.on("friend:response", bumpFriends);
     s.on("friend:removed", bumpFriends);
+
+    s.on("invitation:new", (invitation) =>
+      setInvitations((list) => (list.some((i) => i.id === invitation.id) ? list : [invitation, ...list]))
+    );
 
     s.on("channel:created", (raw) => {
       const channel = toChannel(raw);
@@ -65,6 +71,29 @@ export function WorkspaceProvider({ children }) {
   useEffect(() => {
     if (token) refreshSpaces().catch(() => setSpaces([]));
   }, [token, refreshSpaces]);
+
+  useEffect(() => {
+    if (!token) return;
+    api("/invitations")
+      .then(({ invitations }) => setInvitations(invitations))
+      .catch(() => {});
+  }, [token]);
+
+  // Accepting joins the space; returns its id so the caller can open it
+  const acceptInvitation = useCallback(
+    async (invitationId) => {
+      const { space } = await api(`/invitations/${invitationId}/accept`, { method: "POST" });
+      setInvitations((list) => list.filter((i) => i.id !== invitationId));
+      await refreshSpaces();
+      return space.id;
+    },
+    [refreshSpaces]
+  );
+
+  const declineInvitation = useCallback(async (invitationId) => {
+    await api(`/invitations/${invitationId}`, { method: "DELETE" });
+    setInvitations((list) => list.filter((i) => i.id !== invitationId));
+  }, []);
 
   const loadChannels = useCallback(async (spaceId) => {
     const { channels } = await api(`/channels/servers/${spaceId}`);
@@ -101,6 +130,9 @@ export function WorkspaceProvider({ children }) {
     addChannel,
     followSpace,
     presence,
+    invitations,
+    acceptInvitation,
+    declineInvitation,
     friendsVersion,
     refreshFriends: () => setFriendsVersion((v) => v + 1),
   };

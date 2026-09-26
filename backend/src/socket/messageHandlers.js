@@ -2,6 +2,7 @@ const messageService = require('../services/messageService');
 const channelService = require('../services/channelService');
 const serverService = require('../services/serverService');
 const userService = require('../services/userService');
+const INSTANCE_NAME = require('../config/instance');
 
 const MAX_MESSAGE_LENGTH = 4000;
 
@@ -94,6 +95,11 @@ module.exports = (io, socket) => {
       };
 
       io.to(`channel:${channelId}`).emit('message:new', messageData);
+
+      // Evidence for the scaling experiment (PLAN.md Phase 3): how many sockets *this process*
+      // delivered to. Without a shared adapter, users connected to other copies are never counted.
+      const localListeners = io.sockets.adapter.rooms.get(`channel:${channelId}`)?.size || 0;
+      console.log(`[${INSTANCE_NAME}] message ${message.MessageID} from ${user.Username} -> channel:${channelId}, delivered to ${localListeners} socket(s) on this copy`);
       reply(socket, ack, { ok: true, message: messageData });
     } catch (error) {
       console.error('Error sending message:', error);

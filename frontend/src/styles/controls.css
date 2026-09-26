@@ -189,16 +189,6 @@
   color: var(--accent);
 }
 
-.badge {
-  padding: 1px 7px;
-  border-radius: 999px;
-  border: 1px dashed var(--line-strong);
-  font-size: 0.72rem;
-  font-weight: 500;
-  color: var(--ink-3);
-  letter-spacing: 0.02em;
-}
-
 .count {
   display: inline-grid;
   place-items: center;

@@ -55,12 +55,6 @@
   margin-top: 4px;
 }
 
-.placeholder-block {
-  padding: 14px;
-  border: 1px dashed var(--line-strong);
-  border-radius: var(--radius);
-}
-
 @keyframes fade-in {
   from { opacity: 0; }
 }

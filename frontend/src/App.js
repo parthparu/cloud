@@ -9,6 +9,7 @@ import FriendsPage from "./pages/friends/FriendsPage";
 import SpacePage from "./pages/channel/SpacePage";
 import ChannelPage from "./pages/channel/ChannelPage";
 import InvitePage from "./pages/invite/InvitePage";
+import SecurityPage from "./pages/settings/SecurityPage";
 
 export default function App() {
   return (
@@ -27,6 +28,7 @@ export default function App() {
                 <Route path="/friends" element={<FriendsPage />} />
                 <Route path="/spaces/:spaceId" element={<SpacePage />} />
                 <Route path="/spaces/:spaceId/:channelId" element={<ChannelPage />} />
+                <Route path="/settings/security" element={<SecurityPage />} />
               </Route>
             </Route>
 

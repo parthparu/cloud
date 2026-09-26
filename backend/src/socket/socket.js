@@ -1,6 +1,6 @@
-const os = require('os');
 const socketIo = require('socket.io');
-const jwt = require('jsonwebtoken');
+const INSTANCE_NAME = require('../config/instance');
+const { verifyAccessToken } = require('../utils/tokens');
 const userService = require('../services/userService');
 const serverService = require('../services/serverService');
 const messageHandlers = require('./messageHandlers');
@@ -24,7 +24,7 @@ exports.initializeSocket = (server) => {
         return next(new Error('Authentication error'));
       }
       
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      const decoded = verifyAccessToken(token);
 
       const users = await userService.getUserById(decoded.id);
       if (users.length === 0) {
@@ -43,7 +43,7 @@ exports.initializeSocket = (server) => {
   });
   
   io.on('connection', (socket) => {
-    console.log(`User connected: ${socket.user.username} (${socket.user.id})`);
+    console.log(`[${INSTANCE_NAME}] User connected: ${socket.user.username} (${socket.user.id})`);
 
     userService.updateUser(socket.user.id, { OnlineStatus: 'Online' })
       .then(() => {
@@ -58,7 +58,7 @@ exports.initializeSocket = (server) => {
     socket.join(`user:${socket.user.id}`);
 
     // Which process is serving this socket — the "served-by-pod" badge (PLAN.md Phase 1)
-    socket.emit('session:ready', { node: os.hostname(), pid: process.pid });
+    socket.emit('session:ready', { node: INSTANCE_NAME, pid: process.pid });
 
     // Server rooms carry space-wide events (e.g. new channels); members only
     socket.on('join:server', async (serverId) => {
@@ -78,7 +78,7 @@ exports.initializeSocket = (server) => {
     voiceHandlers(io, socket);
 
     socket.on('disconnect', () => {
-      console.log(`User disconnected: ${socket.user.username} (${socket.user.id})`);
+      console.log(`[${INSTANCE_NAME}] User disconnected: ${socket.user.username} (${socket.user.id})`);
 
       userService.updateUser(socket.user.id, { OnlineStatus: 'Offline' })
         .then(() => {

@@ -36,3 +36,9 @@ Thumbs.db
 .claude/settings.local.json
 # Generated knowledge-graph output
 graphify-out/
+
+# Database CA certificates downloaded from a provider
+backend/certs/
+
+# Output of scripts/demo-two-copies.sh
+.demo-logs/

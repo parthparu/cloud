@@ -1,7 +1,19 @@
 const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
 const authService = require('../services/authService');
 const userService = require('../services/userService');
+const twoFactorService = require('../services/twoFactorService');
+const tokens = require('../utils/tokens');
+
+// The user object returned after a successful sign-in (password-only or password + 2FA)
+const toSessionUser = (user) => ({
+  id: user.UserID,
+  username: user.Username,
+  email: user.Email,
+  profilePicture: user.ProfilePicture,
+  onlineStatus: 'Online',
+  twoFactorEnabled: Boolean(user.TwoFactorEnabled)
+});
+exports.toSessionUser = toSessionUser;
 
 const USERNAME_PATTERN = /^[a-z0-9_.]{3,24}$/;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -48,12 +60,7 @@ exports.register = async (req, res, next) => {
       onlineStatus: 'Offline'
     });
 
-    // Generate JWT token
-    const token = jwt.sign(
-      { id: userId },
-      process.env.JWT_SECRET,
-      { expiresIn: '30d' }
-    );
+    const token = tokens.signAccessToken(userId);
 
     res.status(201).json({
       message: 'User registered successfully',
@@ -93,29 +100,24 @@ exports.login = async (req, res, next) => {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
+    // With 2FA on, a correct password only earns a short-lived challenge for the code step
+    if (await twoFactorService.isEnabled(user.UserID)) {
+      return res.status(200).json({
+        twoFactorRequired: true,
+        challengeToken: tokens.signChallengeToken(user.UserID)
+      });
+    }
+
     // Update last login date and online status
     await userService.updateUser(user.UserID, {
       LastLoginDate: new Date(),
       OnlineStatus: 'Online'
     });
 
-    // Generate JWT token
-    const token = jwt.sign(
-      { id: user.UserID },
-      process.env.JWT_SECRET,
-      { expiresIn: '30d' }
-    );
-
     res.status(200).json({
       message: 'Login successful',
-      token,
-      user: {
-        id: user.UserID,
-        username: user.Username,
-        email: user.Email,
-        profilePicture: user.ProfilePicture,
-        onlineStatus: 'Online'
-      }
+      token: tokens.signAccessToken(user.UserID),
+      user: toSessionUser(user)
     });
   } catch (error) {
     next(error);
@@ -143,7 +145,8 @@ exports.getCurrentUser = async (req, res, next) => {
         aboutMe: user.AboutMe,
         status: user.Status,
         onlineStatus: user.OnlineStatus,
-        joinDate: user.JoinDate
+        joinDate: user.JoinDate,
+        twoFactorEnabled: Boolean(user.TwoFactorEnabled)
       }
     });
   } catch (error) {
