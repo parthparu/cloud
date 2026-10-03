@@ -1,0 +1,11 @@
+# Keep the image small and free of local state and secrets
+node_modules
+npm-debug.log*
+data
+certs
+src/uploads
+.env
+.env.*
+!.env.example
+Dockerfile
+.dockerignore

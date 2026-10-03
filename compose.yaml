@@ -1,0 +1,104 @@
+# The whole system on one machine:
+#
+#   browser ──► web (nginx: React app + load balancer, http://localhost:8080)
+#                 ├──► backend-a ─┐
+#                 └──► backend-b ─┼──► db     (PostgreSQL, local to this stack)
+#                                 └──► redis  (Valkey — shares live events between copies)
+#
+#   docker compose up --build            start everything (the fixed system)
+#   REDIS_URL= docker compose up         same, but WITHOUT Redis: the original failure
+#   docker compose down                  stop (add -v to also delete the database)
+#
+# Secrets (JWT_SECRET, TWO_FACTOR_KEY) are read from backend/.env at run time — never built into
+# an image. The database here is a throwaway local one, so this stack never touches Supabase.
+
+name: chatscale
+
+# Settings shared by both backend copies
+x-backend: &backend
+  build: ./backend
+  image: chatscale-backend:local
+  env_file:
+    - path: ./backend/.env
+      required: false
+  environment: &backend-env
+    # Local database by default. To point the stack at another PostgreSQL (e.g. Supabase), set
+    # COMPOSE_DATABASE_URL in your shell — deliberately a different name from backend/.env's DATABASE_URL.
+    # sslmode=disable: this traffic stays on the private compose network.
+    DATABASE_URL: ${COMPOSE_DATABASE_URL:-postgres://chatscale:chatscale@db:5432/chatscale?sslmode=disable}
+    # "-" (not ":-"): unset -> use Redis; set to empty -> run without it (the broken mode)
+    REDIS_URL: ${REDIS_URL-redis://redis:6379}
+    CLIENT_URL: http://localhost:8080
+    # Demo users are fine here: this database only exists on this machine
+    SEED_DEMO_DATA: "true"
+    # Give the load balancer a moment to notice a copy is leaving before it closes connections
+    SHUTDOWN_DRAIN_SECONDS: "3"
+    UPLOADS_DIR: /tmp/uploads
+  # Nothing in the container may be modified except /tmp — a small, standard hardening step
+  read_only: true
+  tmpfs:
+    - /tmp
+  stop_grace_period: 20s
+  healthcheck:
+    # Ready = database (and Redis, if used) reachable. The load balancer waits for this.
+    test: ["CMD", "wget", "-qO-", "http://127.0.0.1:5001/readyz"]
+    interval: 5s
+    timeout: 3s
+    retries: 6
+    start_period: 10s
+  depends_on:
+    db:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  restart: unless-stopped
+
+services:
+  backend-a:
+    <<: *backend
+    environment:
+      <<: *backend-env
+      INSTANCE_NAME: copy-A
+
+  backend-b:
+    <<: *backend
+    environment:
+      <<: *backend-env
+      INSTANCE_NAME: copy-B
+
+  web:
+    build: ./frontend
+    image: chatscale-web:local
+    ports:
+      - "8080:8080"
+    depends_on:
+      backend-a:
+        condition: service_healthy
+      backend-b:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: chatscale
+      POSTGRES_PASSWORD: chatscale
+      POSTGRES_DB: chatscale
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chatscale -d chatscale"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: valkey/valkey:8-alpine
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  pgdata:

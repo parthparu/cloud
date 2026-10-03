@@ -43,6 +43,8 @@
 | CHG-0023 | 2026-09-27 | Parth | Socket layer / Demo | The fix: Redis adapter behind REDIS_URL (Valkey), shared 2FA counters, live-arrival highlight, demo --fixed mode; two SQLite start-up races fixed | Feature + Defect fix | Medium | Verified |
 | CHG-0024 | 2026-09-27 | Parth | Demo tooling | Plain-English live Redis watcher (npm run watch-redis); copies register their names in Redis | Tooling | Low | Verified |
 | CHG-0025 | 2026-09-27 | Parth | Backend / Supabase | Removed unused voice, attachment, direct-message, pin and reaction code and tables (Supabase 15 -> 9 tables); closes unauthenticated DM routes | Removal | Low | Verified |
+| CHG-0026 | 2026-09-27 | Parth | Infrastructure | Docker images, compose stack with nginx load balancer, health checks, graceful shutdown; 5 defects found by failover testing fixed; tests moved into the repo | Feature + Defect fixes | Medium | Verified |
+| CHG-0027 | 2026-10-01 | Parth | Demo tooling | Demo script checks backend readiness (no false "Ready"), --local-db for networks blocking database ports, clean-up on closed terminal | Defect fix + Tooling | Low | Verified |
 ---
 
 ## 2. Detailed Entries
@@ -1598,6 +1600,139 @@ channel/DM rows; they are unused and harmless. Not modified.
 
 **Rollback Plan**
 Restore the files from git; the tables are recreated automatically on the next start.
+
+---
+
+### CHG-0026 — Containers, Load Balancer, Health Checks, Graceful Shutdown; Tests Moved into the Repository
+
+| Field | Value |
+|---|---|
+| **Change ID** | CHG-0026 |
+| **Date Raised** | 2026-09-27 |
+| **Date Implemented** | 2026-09-27 |
+| **Author** | Parth |
+| **Module / Component** | Docker images, compose stack, nginx, backend lifecycle, frontend socket client, tests |
+| **Change Type** | Feature (infrastructure) + Defect fixes |
+| **Risk Level** | Medium |
+| **Status** | Verified |
+| **Advances** | PLAN.md Phase 2 (containerise, health, graceful shutdown); resolves blocker B-5 |
+
+**Description**
+The system now runs entirely in containers with one command (`docker compose up --build`) at one
+address (http://localhost:8080): nginx (React app + load balancer) → two backend copies →
+PostgreSQL and Valkey. Backends gained liveness/readiness endpoints and graceful shutdown. The API
+test suites, previously kept in a temporary folder that was lost when the session restarted, were
+rebuilt inside the repository.
+
+**Changes Made**
+1. **`backend/Dockerfile`**: two-stage `node:24-alpine`, production dependencies only, runs as the
+   unprivileged `node` user, `HEALTHCHECK` on `/healthz`; `.dockerignore` excludes `.env`, data, certs.
+   Image 263 MB.
+2. **`frontend/Dockerfile`**: builds the app, serves it from `nginxinc/nginx-unprivileged:1.27-alpine`
+   (non-root, port 8080). Image 80 MB. `REACT_APP_API_URL` empty = same origin.
+3. **`frontend/nginx/default.conf`**: `/api/` and `/socket.io/` proxied to an upstream of both copies
+   with `least_conn` (spreads long-lived WebSockets); WebSocket upgrade headers; 1 h read timeout;
+   SPA fallback; long cache for hashed static files.
+4. **`compose.yaml`**: services `web`, `backend-a`, `backend-b` (shared YAML anchor), `db`
+   (postgres:16-alpine, local and throwaway), `redis` (valkey:8-alpine); health-based start order;
+   backends read-only with `/tmp` tmpfs; secrets from `backend/.env` at run time via `env_file`,
+   overridden `DATABASE_URL` so the stack never uses Supabase (`COMPOSE_DATABASE_URL` to opt in);
+   `REDIS_URL= docker compose up` reproduces the failure.
+5. **`backend/src/lifecycle.js`**: `GET /healthz` (alive), `GET /readyz` (database, and Redis when
+   configured; 503 while shutting down); on SIGTERM/SIGINT: not-ready → drain
+   (`SHUTDOWN_DRAIN_SECONDS`, 3 in compose) → `io.close()` → close idle/remaining HTTP connections →
+   close database and Redis → exit, with a hard deadline.
+6. **Frontend socket client**: `transports: ['websocket']` — no long-polling handshake that must hit
+   the same copy, so no sticky sessions are needed (**B-5 resolved**; trade-off: no fallback where
+   WebSockets are blocked). Reconnects after `io server disconnect` with a 0.5–2.5 s random delay.
+7. **PostgreSQL driver**: honours `sslmode=disable` (used only on the private compose network).
+8. **`UPLOADS_DIR`** env var so the upload folder can live on a writable mount.
+9. **Tests in the repo**: `backend/tests/` — `core`, `invitations`, `two-factor`, `cross-copy`
+   (`EXPECT=shared|isolated`) suites, a shared `lib.js`, `run-all.js` (`npm run test:api`,
+   `BASE=` to target), and `failover.compose.js`. Unique usernames per run, so suites repeat on one
+   database. `socket.io-client` added as a backend dev dependency.
+
+**Defects found and fixed**
+
+| ID | Defect | Found by |
+|---|---|---|
+| D-12 | Driver forced TLS for any non-localhost host, so containers couldn't reach the compose database | first `compose up` |
+| D-13 | nginx resolved backend addresses once at start; recreated containers get new IPs → stale routing. Now `resolver` + `resolve` | review during broken-mode switch |
+| D-14 | **Shutting down one copy disconnected every user on every copy** (`io.disconnectSockets()` is broadcast by the Redis adapter). Now `io.close()` | failover test: 10/10 disconnected instead of 5 |
+| D-15 | Shutdown hung until the forced deadline (keep-alive and WebSocket connections held the HTTP server open) | failover test: 13 s forced exit |
+| D-16 | Reconnections hung up to 60 s: a stopped container's address is silent and nginx waited its default connect timeout. Now `proxy_connect_timeout 2s` | failover test: 0/5 reconnected in 8 s |
+
+**Verification**
+- All containers healthy; `/readyz` reports database and Redis ok; demo data seeded exactly once.
+- Through the load balancer: API suites 4/4 (repeated 3×); cross-copy message in 2 ms with users on
+  different copies; with `REDIS_URL=` the isolated behaviour reproduces.
+- Failover (Evidence 03): stopping either copy — clean exit in ~3 s, 0 bystanders disconnected, 5/5
+  users reconnected to the surviving copy within 3.7–5.5 s.
+- Browser at http://localhost:8080: sign-in, "Live · copy-A", message sent; all API calls same-origin.
+- **Observed once, not reproduced:** immediately after the copy-B failover run, one two-factor suite
+  run failed at "enable with the right code" (then cascaded). 13 subsequent runs (10 of that suite,
+  3 of all suites) were clean; container and host clocks agreed. Cause unknown — noted for watching.
+
+**Files Added**
+- `compose.yaml`, `backend/Dockerfile`, `backend/.dockerignore`, `frontend/Dockerfile`,
+  `frontend/.dockerignore`, `frontend/nginx/default.conf`, `backend/src/lifecycle.js`,
+  `backend/tests/{lib,run-all,core.test,invitations.test,two-factor.test,cross-copy.test,failover.compose}.js`,
+  `docs/evidence/03-graceful-failover.md`
+
+**Files Modified**
+- `backend/server.js`, `backend/src/config/db/postgres.js`, `backend/src/middleware/upload.js`,
+  `backend/package.json`, `backend/package-lock.json`, `frontend/src/config.js`,
+  `frontend/src/lib/socket.js`, `README.md`, `docs/CHANGE_LOG.md`
+
+**Rollback Plan**
+The non-container workflow (`npm run dev`, demo script) is unchanged and still works. Revert the
+listed files to remove the container setup.
+
+---
+
+### CHG-0027 — Demo Script: Real Readiness Check, `--local-db`, Clean-up on Closed Terminal
+
+| Field | Value |
+|---|---|
+| **Change ID** | CHG-0027 |
+| **Date Raised** | 2026-10-01 |
+| **Date Implemented** | 2026-10-01 |
+| **Author** | Parth |
+| **Module / Component** | `scripts/demo-two-copies.sh`; demo guide |
+| **Change Type** | Defect fix + Tooling |
+| **Risk Level** | Low |
+| **Status** | Verified |
+
+**Description**
+Owner ran the demo; both backend copies exited with `could not start: Connection terminated due to
+connection timeout`, yet the script printed **"Ready."** Diagnosis: DNS for the Supabase pooler
+resolved and HTTPS (443) to it connected in 20 ms, but TCP to **5432 and 6543 timed out** — as did
+5432 to an unrelated public test host. The network blocks outgoing database ports; Supabase and the
+application were not at fault.
+
+**Defects**
+1. **False "Ready."** The script waited only for the two frontends. It now polls both backends'
+   `/readyz` (30 s each) and, if one isn't ready, prints *NOT READY* with the likely cause and the
+   exact command to retry with `--local-db`, then stops everything.
+2. **Closing the terminal window skipped clean-up** (found while testing): the trap handled
+   EXIT/INT/TERM but not HUP, leaving the Redis container running. HUP added.
+
+**Added**
+- `--local-db`: forces `DATABASE_URL` empty for both copies, so they use `backend/data/chat.sqlite`
+  instead of Supabase. Combines with `--fixed`. The banner states which database is in use.
+- `docs/DEMO.md`: "check the venue's network" section and a troubleshooting row; `README.md` note.
+
+**Verification**
+On the blocking network, with a port-shifted copy of the script: default mode → both copies fail,
+*NOT READY* message with the `--local-db` suggestion after the readiness window, clean stop.
+`--fixed --local-db` → both copies `[db] ready: SQLite`, Redis connected, banner shows the local
+database. The stray container from the closed-window case was removed.
+
+**Files Modified**
+- `scripts/demo-two-copies.sh`, `docs/DEMO.md`, `README.md`, `docs/CHANGE_LOG.md`
+
+**Rollback Plan**
+Revert the script.
 
 ---
 

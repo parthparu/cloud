@@ -47,6 +47,43 @@ two-step verification is unavailable without it). The frontend reads `REACT_APP_
 cd frontend && npm test                        # unit tests
 ```
 
+### Everything in containers (docker compose)
+
+One command builds and starts the whole system — load balancer + React app, two backend copies,
+PostgreSQL and Redis — at **one address**, http://localhost:8080:
+
+```bash
+docker compose up --build
+```
+
+```bash
+REDIS_URL= docker compose up        # same, without Redis: the original failure
+```
+
+```bash
+docker compose down                 # stop (add -v to also delete the stack's database)
+```
+
+It uses its own throwaway PostgreSQL (demo users `ava`, `milo`, password in
+`backend/src/config/seed.js`), never Supabase, and reads `JWT_SECRET` / `TWO_FACTOR_KEY` from
+`backend/.env` at run time. Each backend copy exposes `/healthz` (alive) and `/readyz` (database and
+Redis reachable) and shuts down gracefully on SIGTERM.
+
+### Tests
+
+API suites (accounts, friends, spaces, messages, invitations, two-factor, cross-copy delivery),
+run against any running backend — by default the compose stack:
+
+```bash
+cd backend && npm run test:api                  # BASE=http://localhost:5001 to target another backend
+```
+
+```bash
+cd backend && node tests/failover.compose.js     # stops one copy, checks its users move to the other
+```
+
+Don't point the suites at a backend using a real database (e.g. Supabase): they create users.
+
 ### Running two backend copies (the scaling experiment)
 
 One command starts both copies and both frontends — see [docs/DEMO.md](docs/DEMO.md) for the
@@ -59,6 +96,9 @@ full presentation script:
 ```bash
 ./scripts/demo-two-copies.sh --fixed    # the fix: copies share events through Redis (Docker)
 ```
+
+Add `--local-db` to either to use the local SQLite file instead of Supabase — for networks that
+block database ports. The script checks both copies are ready before saying so.
 
 ```bash
 cd backend && npm run watch-redis        # live, plain-English view of what flows through Redis
@@ -90,10 +130,15 @@ wp_project/
 ├── PLAN.md                      the scaling experiment, phase by phase
 ├── docs/CHANGE_LOG.md           dated record of every change
 │
+├── compose.yaml                 the whole system in containers (docker compose up)
+│
 ├── backend/
+│   ├── Dockerfile               backend image (non-root, health check)
 │   ├── server.js                Express + Socket.IO entry point
+│   ├── tests/                   API test suites (npm run test:api) and the failover test
 │   ├── data/                    SQLite database (created on first run)
 │   └── src/
+│       ├── lifecycle.js         /healthz, /readyz and graceful shutdown
 │       ├── config/              db.js picks PostgreSQL or SQLite (db/postgres.js, db/sqlite.js);
 │       │                        schema.js (tables, written once), seed.js (demo data), instance.js
 │       ├── routes/              URL → controller mapping, one file per resource
@@ -104,6 +149,8 @@ wp_project/
 │       └── socket/              real-time events; adapter.js shares them across copies via Redis
 │
 └── frontend/
+    ├── Dockerfile               builds the app, serves it with nginx
+    ├── nginx/default.conf       load balancer: /api and /socket.io to the backend copies
     ├── public/                  index.html (applies the theme before first paint), favicon
     └── src/
         ├── index.js             entry: fonts, styles, <App />

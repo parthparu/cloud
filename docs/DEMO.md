@@ -43,6 +43,12 @@ Everything below exists to make that one sentence visible.
 
 ---
 
+## Before the day: check the venue's network
+
+Supabase needs outgoing port 5432, which many college and office networks block. On the venue's
+Wi-Fi, run the demo once beforehand. If it stops with **"NOT READY … connection timeout"**, plan to
+use a **phone hotspot**, or run with `--local-db` and prepare alice/bob in the local database.
+
 ## Start
 
 ```bash
@@ -185,6 +191,7 @@ code, runs here on a laptop and later on Kubernetes in the cloud; only the numbe
 | "Port … is already in use" | Another server is running. Stop it (Ctrl-C in its terminal), start again |
 | Badge says "Reconnecting…" | The script isn't ready yet, or was stopped. Wait for "Ready.", refresh |
 | Bob **does** get the message | Check the badges say copy-A and copy-B. If they do, Bob's page reloaded (tab switch, refresh, or a code edit) — the terminal will show `User disconnected: bob` then `User connected: bob`, and the message line still says `delivered to 1 socket(s)`. Use side-by-side windows and resend |
+| **"NOT READY … connection timeout"** at start | The network blocks database ports (common on college/office Wi-Fi), so Supabase can't be reached. Use a **phone hotspot**, or add **`--local-db`** (e.g. `./scripts/demo-two-copies.sh --local-db`, `… --fixed --local-db`). The local database doesn't have alice/bob — sign up there once, or use the demo users `ava` / `milo` (password in `backend/src/config/seed.js`) |
 | `--fixed` says Docker is needed | Open Docker Desktop, wait until it's running, start again |
 | "Request failed (404)" | The backends are older than the frontend (new feature added since they started). Ctrl-C the demo and start it again |
 | Asked to sign in again | Normal after restarting; each window keeps its own session |

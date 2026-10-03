@@ -8,6 +8,7 @@ const morgan = require('morgan');
 const { initializeSocket } = require('./src/socket/socket');
 const realtimeAdapter = require('./src/socket/adapter');
 const errorHandler = require('./src/middleware/errorHandler');
+const lifecycle = require('./src/lifecycle');
 const db = require('./src/config/db');
 
 const authRoutes = require('./src/routes/authRoutes');
@@ -26,6 +27,10 @@ const io = initializeSocket(server);
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+// Health checks come before request logging: orchestrators poll them every few seconds
+app.get('/healthz', lifecycle.liveness);
+app.get('/readyz', lifecycle.readiness);
+
 app.use(morgan('dev'));
 
 app.use('/api/auth', authRoutes);
@@ -46,6 +51,7 @@ Promise.all([db.ready, realtimeAdapter.setup(io)])
     server.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
     });
+    lifecycle.installShutdown({ server, io });
   })
   .catch((err) => {
     console.error('[startup] could not start:', err.message);

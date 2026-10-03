@@ -17,12 +17,16 @@ const isLocalHost = (host) => ["localhost", "127.0.0.1", "::1"].includes(host);
 // without it the connection is still encrypted but not verified, and we say so at startup.
 const buildConfig = () => {
   const url = new URL(process.env.DATABASE_URL);
-  // sslmode in the URL would override the ssl option below; the option is the single source
+  // Read sslmode ourselves, then remove it so pg doesn't apply its own interpretation on top.
+  // sslmode=disable is for private networks only (e.g. the docker compose network).
+  const sslMode = url.searchParams.get("sslmode");
   url.searchParams.delete("sslmode");
 
   let ssl = false;
   let tlsNote = "no TLS (local)";
-  if (!isLocalHost(url.hostname)) {
+  if (sslMode === "disable") {
+    tlsNote = "no TLS (sslmode=disable — private network only)";
+  } else if (!isLocalHost(url.hostname)) {
     const caPath = process.env.DATABASE_CA_CERT;
     if (caPath) {
       ssl = { ca: fs.readFileSync(caPath, "utf8"), rejectUnauthorized: true };

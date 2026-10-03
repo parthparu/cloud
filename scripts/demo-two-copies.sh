@@ -19,11 +19,16 @@ LOG_DIR="$ROOT/.demo-logs"
 mkdir -p "$LOG_DIR"
 
 MODE="broken"
-case "${1:-}" in
-  --fixed) MODE="fixed" ;;
-  "") ;;
-  *) echo "Usage: $0 [--fixed]"; exit 1 ;;
-esac
+LOCAL_DB=false
+for arg in "$@"; do
+  case "$arg" in
+    --fixed) MODE="fixed" ;;
+    # Ignore DATABASE_URL in backend/.env and use the local SQLite file (backend/data/chat.sqlite).
+    # For networks that block database ports (5432), where Supabase can't be reached.
+    --local-db) LOCAL_DB=true ;;
+    *) echo "Usage: $0 [--fixed] [--local-db]"; exit 1 ;;
+  esac
+done
 
 REDIS_CONTAINER="chatscale-demo-valkey"
 REDIS_URL=""
@@ -38,14 +43,14 @@ for port in "${ports[@]}"; do
 done
 
 cleanup() {
-  trap - EXIT INT TERM
+  trap - EXIT INT TERM HUP
   echo
   echo "Stopping demo..."
   [ "$MODE" = fixed ] && docker rm -f "$REDIS_CONTAINER" >/dev/null 2>&1 || true
   kill 0 2>/dev/null
 }
-# Stop every process this script started when it exits or on Ctrl-C
-trap cleanup EXIT INT TERM
+# Stop every process this script started when it exits, on Ctrl-C, or if its terminal is closed
+trap cleanup EXIT INT TERM HUP
 
 if [ "$MODE" = fixed ]; then
   if ! docker info >/dev/null 2>&1; then
@@ -67,6 +72,7 @@ start_backend() {
   local name=$1 port=$2 client=$3
   (
     cd "$ROOT/backend"
+    if [ "$LOCAL_DB" = true ]; then export DATABASE_URL=""; fi
     INSTANCE_NAME="$name" PORT="$port" CLIENT_URL="$client" REDIS_URL="$REDIS_URL" node server.js 2>&1 \
       | tee "$LOG_DIR/$name.log" \
       | grep --line-buffered -E "^\[(copy-|db\]|realtime\])|Server running|could not start"
@@ -88,6 +94,22 @@ start_backend copy-B 5002 http://localhost:3001
 start_frontend 3000 http://localhost:5001
 start_frontend 3001 http://localhost:5002
 
+# Both backend copies must be ready (database and Redis reachable) before we say "Ready"
+for port in 5001 5002; do
+  ready=false
+  for _ in $(seq 1 30); do
+    if curl -sf -o /dev/null "http://localhost:$port/readyz"; then ready=true; break; fi
+    sleep 1
+  done
+  if [ "$ready" != true ]; then
+    echo
+    echo "  NOT READY: the backend on port $port couldn't start (see the lines above)."
+    echo "  'connection timeout' to the database usually means this network blocks database"
+    echo "  ports. Use a phone hotspot, or run without Supabase:  $0 ${*:+$* }--local-db"
+    exit 1
+  fi
+done
+
 # Wait until both frontends answer
 for port in 3000 3001; do
   for _ in $(seq 1 180); do
@@ -95,6 +117,12 @@ for port in 3000 3001; do
     sleep 1
   done
 done
+
+if [ "$LOCAL_DB" = true ]; then
+  DB_LINE="Database: local file (backend/data/chat.sqlite) — not Supabase"
+else
+  DB_LINE="Database: from backend/.env (Supabase if DATABASE_URL is set)"
+fi
 
 if [ "$MODE" = fixed ]; then
   MODE_LINE="FIXED: copies share events through Redis — Bob gets Alice's messages
@@ -107,6 +135,7 @@ cat <<READY
 
   ------------------------------------------------------------
   Ready.  $MODE_LINE
+  $DB_LINE
     Alice: open http://localhost:3000   (badge: Live · copy-A)
     Bob:   open http://localhost:3001   (badge: Live · copy-B)
   Watch this terminal: each message shows who it was delivered to.
