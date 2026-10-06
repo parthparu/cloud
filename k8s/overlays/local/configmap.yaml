@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-config
+data:
+  # sslmode=disable: traffic stays inside the cluster's private network
+  DATABASE_URL: postgres://chatscale:chatscale@postgres:5432/chatscale?sslmode=disable
+  REDIS_URL: redis://redis:6379
+  CLIENT_URL: http://localhost:8080
+  SEED_DEMO_DATA: "true"
+  SHUTDOWN_DRAIN_SECONDS: "3"
+  UPLOADS_DIR: /tmp/uploads

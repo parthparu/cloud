@@ -1,0 +1,14 @@
+# One stable address for both backend pods. This is Kubernetes' own load balancer: it spreads
+# connections across every pod that currently passes readinessProbe, and updates automatically
+# when a pod is replaced — no DNS caching workaround needed (contrast frontend/nginx/default.conf,
+# which had to solve that itself for Docker Compose).
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+spec:
+  selector:
+    app: backend
+  ports:
+    - port: 5001
+      targetPort: 5001

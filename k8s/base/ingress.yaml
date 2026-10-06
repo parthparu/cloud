@@ -1,0 +1,18 @@
+# k3d ships Traefik as its ingress controller by default, and maps the cluster's load balancer
+# to host ports when the cluster is created (see scripts/k8s-up.sh: -p "8080:80@loadbalancer").
+# No hostname needed: this is the only Ingress, so it catches everything.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: chatscale
+spec:
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 8080

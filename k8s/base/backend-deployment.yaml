@@ -1,0 +1,94 @@
+# Two copies of the backend, on purpose — this is the subject of the experiment. Kubernetes
+# restarts a copy if it crashes, and gives each pod its own hostname, which the app uses as its
+# "which copy served you" badge (backend/src/config/instance.js) — no INSTANCE_NAME needed here.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  labels:
+    app: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      # Give the pod time to drain before it's killed (backend/src/lifecycle.js handles SIGTERM)
+      terminationGracePeriodSeconds: 20
+      # Found during testing: on a fresh cluster, backend pods started before Postgres had even
+      # finished pulling its image. server.js correctly refuses to listen and exits(1) — but that
+      # feeds Kubernetes' crash-loop backoff, whose delay doubles each time (10s, 20s, 40s... up
+      # to 5 min), so one bad-timing start could cost minutes. Waiting here instead costs seconds
+      # and never triggers the backoff at all. Skipped automatically when DATABASE_URL is unset
+      # (SQLite mode has nothing to wait for).
+      initContainers:
+        - name: wait-for-database
+          image: chatscale-backend:local
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: backend-config
+          command:
+            - node
+            - -e
+            - |
+              const url = process.env.DATABASE_URL;
+              if (!url) { console.log('no DATABASE_URL — nothing to wait for'); process.exit(0); }
+              const { hostname, port } = new URL(url);
+              const net = require('net');
+              const tryOnce = () => new Promise((resolve) => {
+                const socket = net.connect({ host: hostname, port: Number(port || 5432), timeout: 2000 });
+                socket.on('connect', () => { socket.destroy(); resolve(true); });
+                socket.on('error', () => resolve(false));
+                socket.on('timeout', () => { socket.destroy(); resolve(false); });
+              });
+              (async () => {
+                for (let attempt = 1; attempt <= 60; attempt++) {
+                  if (await tryOnce()) { console.log(`${hostname}:${port} is accepting connections`); process.exit(0); }
+                  console.log(`waiting for ${hostname}:${port} (attempt ${attempt})`);
+                  await new Promise((r) => setTimeout(r, 2000));
+                }
+                console.error(`gave up waiting for ${hostname}:${port}`);
+                process.exit(1);
+              })();
+      containers:
+        - name: backend
+          image: chatscale-backend:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5001
+          envFrom:
+            - configMapRef:
+                name: backend-config
+            - secretRef:
+                name: backend-secret
+          # CPU request sized so a handful of pods fills a small node — matters once
+          # autoscaling is added (PLAN.md Phase 7); harmless before that.
+          resources:
+            requests:
+              cpu: 100m
+              memory: 96Mi
+            limits:
+              memory: 256Mi
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 5001
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 5001
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            failureThreshold: 2
+          # Give the load balancer a moment to stop sending new traffic before the process exits
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "3"]

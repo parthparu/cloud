@@ -42,3 +42,6 @@ backend/certs/
 
 # Output of scripts/demo-two-copies.sh
 .demo-logs/
+
+# Generated per-cluster secret for the local k8s overlay (scripts/k8s-up.sh creates it)
+k8s/overlays/local/secret.env

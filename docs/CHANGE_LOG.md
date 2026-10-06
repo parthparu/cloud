@@ -45,6 +45,8 @@
 | CHG-0025 | 2026-09-27 | Parth | Backend / Supabase | Removed unused voice, attachment, direct-message, pin and reaction code and tables (Supabase 15 -> 9 tables); closes unauthenticated DM routes | Removal | Low | Verified |
 | CHG-0026 | 2026-09-27 | Parth | Infrastructure | Docker images, compose stack with nginx load balancer, health checks, graceful shutdown; 5 defects found by failover testing fixed; tests moved into the repo | Feature + Defect fixes | Medium | Verified |
 | CHG-0027 | 2026-10-01 | Parth | Demo tooling | Demo script checks backend readiness (no false "Ready"), --local-db for networks blocking database ports, clean-up on closed terminal | Defect fix + Tooling | Low | Verified |
+| CHG-0028 | 2026-10-03 | Parth | Infrastructure (Kubernetes) | Experiment and chaos test re-run on a real k3d Kubernetes cluster; 3 deployment-ordering defects found and fixed (namespace inheritance, secretGenerator, crash-loop before DB ready) | Feature + Defect fixes | Medium | Verified |
+| CHG-0029 | 2026-10-06 | Parth | Documentation | Added docs/STATUS.md — a session-handoff summary of project state, rules and next steps, for Claude sessions to read first | Documentation | Low | Verified |
 ---
 
 ## 2. Detailed Entries
@@ -1733,6 +1735,156 @@ database. The stray container from the closed-window case was removed.
 
 **Rollback Plan**
 Revert the script.
+
+---
+
+### CHG-0028 — The Experiment on Real Kubernetes (k3d); Three Deployment-Ordering Defects Found and Fixed
+
+| Field | Value |
+|---|---|
+| **Change ID** | CHG-0028 |
+| **Date Raised** | 2026-10-03 |
+| **Date Implemented** | 2026-10-03 |
+| **Author** | Parth |
+| **Module / Component** | `k8s/` manifests (new); `scripts/k8s-up.sh`, `k8s-down.sh`, `k8s-chaos.sh` (new); `backend/tests/failover.k8s.js` (new) |
+| **Change Type** | Feature (experiment) + Defect fixes |
+| **Risk Level** | Medium (new infrastructure layer; no change to application code paths already covered by CHG-0023/0026) |
+| **Status** | Verified |
+| **Advances** | PLAN.md Phase 3 (k3d: break it, then fix it, on real pods) and lays the groundwork the Phase 5 cloud overlay will reuse unchanged |
+
+**Description**
+Everything up to CHG-0027 ran as plain processes or Docker Compose containers, where the number of
+copies and their restart was decided by hand or by Compose's own (non-Kubernetes) supervision. This
+change runs the identical containers under real Kubernetes — a local `k3d` cluster (1 server + 2
+agent nodes) — using Deployments, a Service for load-balancing between backend pods, readiness and
+liveness probes, and a Traefik Ingress at one address, http://localhost:8080. The break/fix
+experiment and a pod-kill chaos test were both re-run on this substrate and produced the same
+result as on a laptop and in Docker Compose, with zero application code changes.
+
+**Manifests** (`k8s/`)
+- `base/`: `backend-deployment.yaml` (2 replicas; CPU/memory requests sized per PLAN.md §6.1's
+  "~400m per pod" guidance for the later autoscaling phase; readiness/liveness probes on
+  `/readyz`/`/healthz`; a `preStop` sleep so the load balancer notices a terminating pod before it
+  exits), `backend-service.yaml`, `redis.yaml` (Valkey), `frontend-deployment.yaml` +
+  `frontend-nginx-configmap.yaml` (simpler than `frontend/nginx/default.conf` — a Kubernetes
+  Service address is stable and self-updating, so none of Compose's DNS-caching workaround
+  (`resolver`/`resolve`, CHG-0026 D-13) is needed here), `ingress.yaml`, `secret.example.yaml`
+  (template only), `namespace.yaml`.
+- `overlays/local/`: its own throwaway in-cluster PostgreSQL (never Supabase — per the
+  `tests-never-touch-supabase` project rule), a `backend-config` ConfigMap, and a `secretGenerator`
+  reading `secret.env` (gitignored; `scripts/k8s-up.sh` generates one per cluster with fresh
+  random `JWT_SECRET`/`TWO_FACTOR_KEY`). A cloud overlay (Phase 5) adds to this base rather than
+  replacing it.
+- `scripts/k8s-up.sh`: builds both images, creates/reuses the cluster, imports images (k3d nodes
+  don't share the host's Docker image store), applies the overlay, flips `REDIS_URL` for
+  `REDIS_OFF=1` mode, waits for every Deployment to roll out, prints next steps.
+- `scripts/k8s-down.sh`: deletes the cluster. `scripts/k8s-chaos.sh`: thin wrapper around the new
+  test below.
+- `backend/tests/failover.k8s.js`: connects 10 users through the Ingress, `kubectl delete pod`s
+  whichever backend pod has the most of them, and checks Kubernetes schedules a replacement and
+  that pod's users reconnect to the survivor — the Kubernetes analogue of CHG-0026's
+  `failover.compose.js`.
+
+**Defects found and fixed (all three while bringing the cluster up for the first time)**
+
+| ID | Defect | Found by |
+|---|---|---|
+| D-17 | **Kustomize's `namespace:` field only applies to resources listed in the kustomization.yaml that sets it** — `postgres.yaml` and `configmap.yaml`, added directly in `overlays/local/kustomization.yaml` (not via `../../base`), didn't inherit base's `namespace: chatscale` and were created in `default`. Backend pods (correctly in `chatscale`) then failed with `CreateContainerConfigError: configmap "backend-config" not found`. Fixed by restating `namespace: chatscale` in the overlay too; documented in the file as a caught bug, not just a style choice. | First `kubectl apply`; `kubectl get pods` showing pods for a Deployment that itself showed as created |
+| D-18 | `secretGenerator` used `behavior: replace`, which requires a base resource of that name to replace — there is deliberately none (base never defines a secret; only an overlay should). `kubectl apply` failed outright: `merging from generator ...: id ... does not exist`. Fixed by removing `behavior: replace` (plain `create` is correct here). | First `kubectl apply` |
+| D-19 | **Deployment-ordering race on first boot.** Backend pods started before Postgres's image had even finished pulling; `server.js` correctly refused to listen and `exit(1)`'d — but Kubernetes' crash-loop backoff then doubled the retry delay each time (up to 5 min), so one bad-timing start cost minutes even after Postgres became ready. Fixed with an `initContainer` (`wait-for-database`, reusing the backend image — no extra pull) that parses `DATABASE_URL` and polls the TCP port every 2 s before the main container starts at all; skips immediately if `DATABASE_URL` is unset. Costs seconds instead of minutes and never triggers the backoff. | A from-scratch cluster run: backend sat in `CrashLoopBackOff` with a 4 min 22 s backoff gap even after Postgres was `1/1 Running` |
+
+**Also found, not a defect — operating condition already documented for this network** (see
+CHG-0027): pulling images *inside* the k3d nodes (they have their own containerd store, separate
+from the host Docker cache) is slow and occasionally needs the same per-image retry as the Supabase
+connection did. `scripts/k8s-up.sh`'s rollout-wait timeouts were raised accordingly (postgres 90s
+→ 240s, backend 120s → 180s, frontend 60s → 120s) and it now prints a clear "NOT READY, check
+`kubectl describe pod`, re-run the script" message instead of a bare timeout error — re-running is
+safe and reuses the existing cluster.
+
+**Verification**
+- `kubectl -n chatscale get pods`: 5/5 `Running`, `1/1` ready (backend ×2, frontend, redis, postgres).
+- Fixed mode: all 4 API suites pass through the Ingress; `cross-copy.test.js` shows two *real*
+  Kubernetes pods (`backend-...-mspcv` / `...-mkrjd`) and **2 ms** delivery latency. Repeated
+  3× clean after the chaos test below.
+- `REDIS_OFF=1` reproduced via `kubectl set env deployment/backend REDIS_URL=` (an explicit `env:`
+  entry overrides the ConfigMap's `envFrom` value — `kubectl set env ... REDIS_URL-` is a no-op
+  here since no explicit entry exists until one is set, corrected in `k8s-up.sh`'s own logic too):
+  pods log `adapter: in-memory`; the isolated-mode assertions in `cross-copy.test.js` passed
+  (message and friend-request notification both **do not** cross pods) — the original failure,
+  unchanged, on Kubernetes-scheduled pods. Reverting the override restored the fix; retested clean.
+- **Chaos test** (`docs/evidence/04-kubernetes.md`): 10 users through the Ingress, 7 landed on one
+  pod; that pod deleted outright. Kubernetes scheduled a replacement in **7 s**; **0** bystanders on
+  the untouched pod were disconnected; **7/7** victims reconnected within **0.6–1.4 s**, all to the
+  surviving pod; Deployment back to `2/2` ready in **16.3 s** total — markedly faster than Docker
+  Compose's `stop` (CHG-0026: 3.7–5.5 s), because a Kubernetes Service removes a terminating pod
+  from routing immediately rather than relying on a connect-timeout.
+- Browser: signed in via http://localhost:8080; "Live · backend-79db6b7f95-km2hh" badge shows the
+  real pod hostname with no `INSTANCE_NAME` configuration needed (unlike the laptop/Compose setups).
+- Full teardown (`k3d cluster delete`) and a clean `./scripts/k8s-up.sh` re-run reproduced the same
+  healthy end state (after D-17–D-19 were fixed), confirming the script works unattended from zero.
+
+**Files Added**
+- `k8s/base/{namespace,backend-deployment,backend-service,redis,frontend-deployment,`
+  `frontend-nginx-configmap,ingress,secret.example,kustomization}.yaml`
+- `k8s/overlays/local/{postgres,configmap,kustomization,secret.env.example}.yaml`
+- `scripts/{k8s-up.sh,k8s-down.sh,k8s-chaos.sh}`
+- `backend/tests/failover.k8s.js`
+- `docs/evidence/04-kubernetes.md`
+
+**Files Modified**
+- `.gitignore` (`k8s/overlays/local/secret.env`), `README.md`, `docs/CHANGE_LOG.md`
+
+**Known Limitations**
+1. Single laptop: every "node" is a container sharing one Docker daemon, so this cannot show a
+   whole **machine** or **availability zone** failing — that needs Phase 5's real cloud cluster.
+2. No autoscaling yet (HPA / Cluster Autoscaler) — Phase 4/7.
+3. `k8s/overlays/local`'s Postgres is throwaway and unauthenticated-by-default beyond its
+   in-cluster-only Service — acceptable for a local experiment cluster, not for Phase 5.
+
+**Rollback Plan**
+`./scripts/k8s-down.sh` deletes the cluster and everything in it; no other part of the project
+depends on it. Revert the listed files to remove the Kubernetes layer entirely.
+
+---
+
+### CHG-0029 — Session Handoff Doc (`docs/STATUS.md`)
+
+| Field | Value |
+|---|---|
+| **Change ID** | CHG-0029 |
+| **Date Raised** | 2026-10-06 |
+| **Date Implemented** | 2026-10-06 |
+| **Author** | Parth |
+| **Module / Component** | Documentation |
+| **Change Type** | Documentation |
+| **Risk Level** | Low |
+| **Status** | Verified |
+
+**Description**
+Added `docs/STATUS.md`, a concise "read this first" summary for a new Claude session (or a human
+picking the project back up): one-paragraph project summary, a step-by-step status table, exact
+commands to run every variant of the app (local, Docker Compose, Kubernetes, the laptop demo), the
+project's hard rules established through this chat (never push, always log changes, never let test
+scripts touch Supabase, repo location, known network quirks, both collaborators are new to cloud/
+Kubernetes), a table of the files most worth reading first, and what Phase 4 (next) actually
+involves. Distinct from `docs/CHANGE_LOG.md` (a complete, append-only record of every change) and
+`PLAN.md` (the original phase-by-phase plan) — this is a live, overwritten-in-place snapshot of
+*current* state, meant to be read in under two minutes.
+
+**Why now:** raised directly by the owner, who wants a new chat session to be able to pick up the
+project without re-deriving context already established over many prior sessions.
+
+**Files Added**
+- `docs/STATUS.md`
+
+**Files Modified**
+- `README.md` (links to it), `docs/CHANGE_LOG.md`
+
+**Verification**
+Read back for accuracy against current `git status`, `k3d cluster list`, and the change register.
+
+**Rollback Plan**
+Delete the file; nothing else depends on it.
 
 ---
 
