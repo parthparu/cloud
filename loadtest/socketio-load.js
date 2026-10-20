@@ -61,16 +61,18 @@ const STAGE_PROFILES = {
 };
 const PROFILE = __ENV.PROFILE || 'local';
 
+// PLAN.md Phase 6's scaling-efficiency curve wants "fixed load, pods pinned at 1->2->4" — a
+// constant VU count held steady, not a ramp, so throughput at each pod count is comparable
+// apples-to-apples. scripts/scaling-efficiency.sh drives this one.
+const FIXED_VUS = Number(__ENV.FIXED_VUS || 20);
+const FIXED_DURATION = __ENV.FIXED_DURATION || '2m';
+
+const scenario = PROFILE === 'fixed'
+  ? { executor: 'constant-vus', vus: FIXED_VUS, duration: FIXED_DURATION, gracefulStop: '10s' }
+  : { executor: 'ramping-vus', startVUs: 0, stages: STAGE_PROFILES[PROFILE], gracefulRampDown: '10s', gracefulStop: '10s' };
+
 export const options = {
-  scenarios: {
-    chat_load: {
-      executor: 'ramping-vus',
-      startVUs: 0,
-      stages: STAGE_PROFILES[PROFILE],
-      gracefulRampDown: '10s',
-      gracefulStop: '10s',
-    },
-  },
+  scenarios: { chat_load: scenario },
   thresholds: {
     connect_success: ['rate>0.95'],
     join_channel_success: ['rate>0.95'],

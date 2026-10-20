@@ -1,0 +1,171 @@
+# prometheus-adapter: lets the Kubernetes HPA scale on chatscale_socket_connections (a Prometheus
+# metric, CHG-0030) the same way it natively scales on CPU — by exposing it through Kubernetes'
+# "external.metrics.k8s.io" API, which the HPA controller already knows how to read.
+#
+# Uses the *external* metrics API, not the more common *pods* metrics API, on purpose: the "pods"
+# API needs each Prometheus sample to resolve to one specific Kubernetes Pod object (a `namespace`
+# + `pod` label matching a real pod), which our scrape config doesn't provide — Prometheus
+# discovers backend pods via plain DNS (the backend-headless Service, CHG-0031), not the
+# Kubernetes API, specifically to avoid needing RBAC to watch pods. The "external" API sidesteps
+# that entirely: the adapter just computes one number (the average connections per pod, across
+# whichever pods currently exist) and hands it to the HPA, which is exactly what an
+# `averageValue`-type External metric target wants. No Kubernetes-aware labels needed on our
+# metric at all.
+#
+# Like metrics-server (already bundled with k3s/k3d — confirmed working, `kubectl top nodes`), this
+# runs as a Kubernetes aggregated API server: it registers an APIService so the main API server
+# proxies external.metrics.k8s.io requests to it. `insecureSkipTLSVerify: true` below skips
+# generating a proper CA-signed serving certificate for it — fine for this local, never-exposed
+# experiment cluster (same pragmatic trade-off already made for Supabase's unverified TLS, see
+# docs/STATUS.md's known limitations), not something to carry into a real deployment.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus-adapter
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus-adapter:system:auth-delegator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:auth-delegator
+subjects:
+  - kind: ServiceAccount
+    name: prometheus-adapter
+    namespace: chatscale
+---
+# The other direction: lets the HPA controller itself (which runs as this well-known service
+# account in kube-system) actually call the external metrics API once it exists
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: external-metrics-reader
+rules:
+  - apiGroups: ["external.metrics.k8s.io"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: external-metrics-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: external-metrics-reader
+subjects:
+  - kind: ServiceAccount
+    name: horizontal-pod-autoscaler
+    namespace: kube-system
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-adapter-config
+data:
+  config.yaml: |
+    externalRules:
+      - seriesQuery: 'chatscale_socket_connections'
+        # namespaced:false — external queries are namespace-scoped by default (the HPA always asks
+        # "for namespace chatscale"), which needs a label on the metric mapping to a namespace.
+        # Our metric has none (confirmed against the adapter's own source — pkg/naming, the
+        # "no generic resource label form specified for this metric" error otherwise), and we
+        # don't want namespace scoping anyway: there's only ever one backend Deployment.
+        resources:
+          namespaced: false
+        name:
+          matches: "chatscale_socket_connections"
+          as: "chatscale_socket_connections"
+        # sum(), not avg(): an External metric with an AverageValue-type HPA target (see
+        # backend-hpa-connections.yaml) is documented as the HPA dividing the metric's raw value
+        # by the current replica count ITSELF to get "average per pod" — the adapter is expected
+        # to hand over the total. Using avg() here double-divided (avg already /2, then the HPA
+        # divided by replicas(2) again), silently halving every reading. Caught by comparing the
+        # HPA's displayed value against Prometheus's own query_range for the same window during
+        # a load test: Prometheus showed a sustained total of 20 (sum, 65+ seconds) while the HPA
+        # showed 5 — exactly 20/2/2, confirming the double-division (CHG-0034).
+        metricsQuery: 'sum(<<.Series>>{<<.LabelMatchers>>})'
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus-adapter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus-adapter
+  template:
+    metadata:
+      labels:
+        app: prometheus-adapter
+    spec:
+      serviceAccountName: prometheus-adapter
+      containers:
+        - name: prometheus-adapter
+          image: registry.k8s.io/prometheus-adapter/prometheus-adapter:v0.12.0
+          args:
+            - --prometheus-url=http://prometheus:9090/
+            # Matches Prometheus's own scrape_interval (prometheus.yaml) — no point refreshing
+            # faster than the source data changes. The default (30s) was too coarse against a
+            # short local load-test run: the adapter's cached reading lagged behind the test's
+            # actual peak, so the HPA only ever saw a diluted average (see CHG-0034 for the
+            # measurement that caught this)
+            - --metrics-relist-interval=10s
+            - --config=/etc/adapter/config.yaml
+            - --secure-port=6443
+            # Self-signed serving cert, generated on startup (same as metrics-server) — needs an
+            # explicit writable directory, or it tries to mkdir one relative to its working
+            # directory and fails with "permission denied"
+            - --cert-dir=/tmp/certs
+          ports:
+            - containerPort: 6443
+          volumeMounts:
+            - name: config
+              mountPath: /etc/adapter
+            - name: certs
+              mountPath: /tmp/certs
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 6443
+              scheme: HTTPS
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+      volumes:
+        - name: certs
+          emptyDir: {}
+        - name: config
+          configMap:
+            name: prometheus-adapter-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus-adapter
+spec:
+  selector:
+    app: prometheus-adapter
+  ports:
+    - port: 443
+      targetPort: 6443
+---
+apiVersion: apiregistration.k8s.io/v1
+kind: APIService
+metadata:
+  name: v1beta1.external.metrics.k8s.io
+spec:
+  service:
+    name: prometheus-adapter
+    namespace: chatscale
+    port: 443
+  group: external.metrics.k8s.io
+  version: v1beta1
+  insecureSkipTLSVerify: true
+  groupPriorityMinimum: 100
+  versionPriority: 100

@@ -1,0 +1,36 @@
+# One half of the Phase 7 autoscaler comparison (PLAN.md §2.2): scale the backend on CPU
+# utilization, the Kubernetes default. A chat app's idle WebSocket connections barely use CPU, so
+# the hypothesis under test is that this HPA reacts late — or not at all — to a connection-count
+# surge that doesn't also spike CPU. See hpa-connections.yaml for the other half of the comparison.
+#
+# Not applied by default (not listed in k8s/base/kustomization.yaml): this and
+# hpa-connections.yaml both target the same Deployment, and Kubernetes doesn't stop you from
+# applying two HPAs to one target — it just makes them fight each other, silently producing
+# meaningless results. Apply exactly one at a time:
+#   kubectl apply -f k8s/experiments/hpa-cpu.yaml
+#   kubectl delete -f k8s/experiments/hpa-cpu.yaml   # before switching to the other one
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: backend-hpa-cpu
+  namespace: chatscale
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: backend
+  minReplicas: 2
+  maxReplicas: 6
+  behavior:
+    # PLAN.md: "HPA scale-down is deliberately slow (5-minute stabilisation)" — kept at the
+    # Kubernetes default (300s) rather than overridden, so the comparison isn't accidentally
+    # tuned differently between the two HPAs
+    scaleDown:
+      stabilizationWindowSeconds: 300
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60

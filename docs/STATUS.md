@@ -2,11 +2,14 @@
 
 **Read this first in a new session.** It's the "what's going on" doc — for the full plan see
 [PLAN.md](../PLAN.md) (**read its r4 amendment note near the top first** — project scope changed),
-for the formal record of every change see [docs/CHANGE_LOG.md](CHANGE_LOG.md) (CHG-0001 to
-CHG-0033 so far), for the demo script see [docs/DEMO.md](DEMO.md).
+for the final write-up see **[docs/REPORT.md](REPORT.md)**, for the formal record of every change
+see [docs/CHANGE_LOG.md](CHANGE_LOG.md) (CHG-0001 to CHG-0036 so far), for the demo script see
+[docs/DEMO.md](DEMO.md).
 
-**Last updated:** 2026-10-20, after descoping Phase 5 (real cloud) — project now ends at local
-Kubernetes (k3d). See `PLAN.md`'s r4 amendment note and CHG-0033.
+**Last updated:** 2026-10-20, after `docs/REPORT.md` (CHG-0036) — **the project is complete.**
+Every step in the table below is done. What remains, if anything, is pushing the last few CHGs and
+whatever the owner wants to do with the finished report (submit it, present it, revisit a
+descoped piece later).
 
 ---
 
@@ -20,12 +23,20 @@ the fix unchanged on Docker Compose and then on a real local Kubernetes cluster 
 chaos test that kills a pod and measures recovery. The backend now exposes Prometheus metrics at
 `/metrics` (connections, messages, broadcast latency), Prometheus + Grafana run as two more pods
 in the same k3d cluster scraping and graphing it live, and a k6 script (`loadtest/socketio-load.js`)
-can fake many simultaneous chat users — verified at 20 VUs against the real cluster, 328 messages
-sent and acked with zero failures. **The project's scope is now finalized at local Kubernetes**:
-Azure for Students verification never resolved (R-12), and rather than restart that process with a
-second cloud provider, the decision was to stop here — everything through local k3d is a complete,
-self-contained result on its own. Next up: a Horizontal Pod Autoscaler (CPU vs connection count),
-the last piece of local scope, then the write-up.
+can fake many simultaneous chat users. **And the project's central hypothesis is now measured, not
+just assumed**: a CPU-based Horizontal Pod Autoscaler never scaled under realistic chat load
+(peaked at 36% against a 60% target), while a connection-count-based one (via `prometheus-adapter`
+reading `chatscale_socket_connections`) scaled correctly within 50 seconds of identical load — see
+[docs/evidence/05-autoscaling.md](evidence/05-autoscaling.md). Two measurements PLAN.md's own
+thesis table named but that had been missed — Redis's same-pod-vs-cross-pod latency cost, and
+whether throughput/latency actually scales with pod count — are now measured too: Redis tax is
+negligible on this local single-machine cluster (explained, not just reported), and p95 message
+latency dropped 110ms → 85ms → 34ms going from 1 to 4 pods under identical fixed load (see
+[evidence/06](evidence/06-redis-tax.md) and [evidence/07](evidence/07-scaling-efficiency.md)).
+**The project's scope is finalized at local Kubernetes**: Azure for Students verification never
+resolved (R-12), and rather than restart that process with a second cloud provider, the decision
+was to stop here. **Every row of the local-scope thesis table is measured, and the final write-up
+exists: [docs/REPORT.md](REPORT.md).** The project is complete.
 
 ---
 
@@ -35,12 +46,15 @@ the last piece of local scope, then the write-up.
 cd ~/dev/wp_project && git status --short
 ```
 
-**As of this writing, everything through CHG-0032 (Kubernetes, metrics, Prometheus/Grafana, the k6
-load test) is pushed** — `origin/main` has it all. **The r4 scope-change edit to `PLAN.md`
-(descoping Phase 5, CHG-0033) is the only thing not yet committed as of this note** — check
-`git status`; if it shows only `PLAN.md` (and this file) modified, that's it, nothing else is
-pending. The user has a standing rule: **Claude never runs `git add`/`commit`/`push` — always give
-the commands and let the user run them.**
+**As of this writing, everything through CHG-0033 (Kubernetes, metrics, Prometheus/Grafana, the k6
+load test, the PLAN.md r4 scope change) is pushed** — `origin/main` has it all. **CHG-0034 through
+CHG-0036 (the HPA comparison, Redis tax + scaling efficiency, and docs/REPORT.md itself) are not
+yet committed** — check `git status`; if it shows `k8s/base/prometheus-adapter*.yaml`,
+`k8s/experiments/`, `scripts/hpa-compare.sh`, `scripts/scaling-efficiency.sh`,
+`backend/tests/redis-tax.k8s.js`, `docs/evidence/05-*.md` through `07-*.md`, `docs/REPORT.md`, and
+the usual doc files uncommitted, that work is done but just sitting there; don't redo it, just
+offer the git commands again. The user has a standing rule: **Claude never runs
+`git add`/`commit`/`push` — always give the commands and let the user run them.**
 
 Also check whether a k3d cluster is running (`k3d cluster list`) and Docker Desktop is up
 (`docker info`) before assuming anything about live infra — both get torn down/forgotten between
@@ -82,9 +96,13 @@ for the full reasoning and CHG-0033 for the formal record.
 | 4a | **Metrics endpoint** (`prom-client`, `GET /metrics`: connections, messages, broadcast latency) | ✅ Done, pushed — CHG-0030 |
 | 4b | **Prometheus + Grafana** in k3d, scraping `/metrics`, one dashboard | ✅ Done, pushed — CHG-0031 |
 | 4c | **Load test** (`loadtest/socketio-load.js`, k6 over raw WebSocket) | ✅ Done, pushed — CHG-0032 |
-| 4d | **Autoscaling** (HPA: CPU vs connection count) — fully local, no cloud needed | ⏭️ **Not started — next up** |
+| 4d | **Autoscaling** (HPA: CPU vs connection count) | ✅ Built & tested — **⚠️ NOT pushed**, see above — CHG-0034, [evidence/05](evidence/05-autoscaling.md) |
+| — | **Phase 4 is complete.** | ✅ |
+| — | **Redis tax** (same-pod vs cross-pod delivery latency, PLAN.md Phase 6) | ✅ Built & tested — **⚠️ NOT pushed** — CHG-0035, [evidence/06](evidence/06-redis-tax.md) |
+| — | **Scaling efficiency** (throughput/latency, 1/2/4 pods, PLAN.md Phase 6) | ✅ Built & tested — **⚠️ NOT pushed** — CHG-0035, [evidence/07](evidence/07-scaling-efficiency.md) |
 | 5 | ~~Cloud~~ (real machines, Cluster Autoscaler, zone failures, public link) | **DESCOPED (r4)** — Azure verification never resolved; project scope finalized at local k3d — see `PLAN.md`'s r4 amendment, CHG-0033 |
-| 6 | Write-up: graphs, recordings, findings, cost model (local-only scope) | Not started — next after step 4d |
+| 6 | **Write-up:** [docs/REPORT.md](REPORT.md) — findings, cost model, full reproduction guide | ✅ Built & tested — **⚠️ NOT pushed**, see above — CHG-0036 |
+| — | **Project complete.** | ✅ |
 
 ---
 
@@ -117,6 +135,16 @@ cd backend && npm run test:api
 # Fake many simultaneous chat users against whatever's running at :8080 (or set BASE=):
 k6 run loadtest/socketio-load.js                        # local rehearsal: ramps to 20 VUs
 k6 run -e PROFILE=full loadtest/socketio-load.js         # PLAN.md's real profile: 0->50->100->150
+
+# Autoscaling comparison (k3d only — needs prometheus-adapter, applied by k8s-up.sh):
+./scripts/hpa-compare.sh cpu           # CPU-based HPA + load test, watched live
+./scripts/hpa-compare.sh connections   # connection-count-based HPA + load test, watched live
+
+# Redis tax: same-pod vs cross-pod delivery latency (needs >=2 k8s pods, Redis on):
+cd backend && SAMPLES=200 node tests/redis-tax.k8s.js
+
+# Scaling efficiency: fixed load at 1, 2, 4 pods (k3d only, ~8 minutes total):
+./scripts/scaling-efficiency.sh
 ```
 
 Demo accounts in **Supabase** (the laptop demo's database): `alice` / `bob`, in space "demo day".
@@ -160,9 +188,10 @@ throwaway local databases, never Supabase).
 
 | File | What it is |
 |---|---|
-| `PLAN.md` | The master plan, phase by phase (this project's phases ≠ the "step" numbers used in chat — Phase 3 in PLAN.md is "steps 1–3" here: Redis fix, containers, Kubernetes) |
+| `docs/REPORT.md` | **The final write-up (CHG-0036).** Every measured result, the cost model, what's explicitly not claimed, and a full reproduction guide — the one document to hand someone who asks "what did this project show?" |
+| `PLAN.md` | The master plan, phase by phase (this project's phases ≠ the "step" numbers used in chat — Phase 3 in PLAN.md is "steps 1–3" here: Redis fix, containers, Kubernetes). **Read its r4 amendment note first** |
 | `docs/CHANGE_LOG.md` | Every change, CHG-0001 onward. Read the last few entries to know exactly what just happened |
-| `docs/evidence/0{1,2,3,4}-*.md` | The experiment's actual measured results, written up for the report |
+| `docs/evidence/0{1..7}-*.md` | The experiment's actual measured results, written up for the report — `05` is the CPU-vs-connections HPA finding, the project's strongest single result; `06`/`07` are the Redis tax and scaling-efficiency measurements |
 | `docs/DEMO.md` | The faculty-facing presentation script (two parts: broken, then fixed) |
 | `backend/src/socket/adapter.js` | The Redis fix itself — the whole thesis in one file |
 | `backend/src/config/instance.js` | How a copy knows its own name (`INSTANCE_NAME` env var, or the pod hostname on Kubernetes automatically) |
@@ -175,40 +204,67 @@ throwaway local databases, never Supabase).
 | `scripts/k8s-up.sh` | Reading this script's comments explains most of the Kubernetes gotchas hit along the way |
 | `scripts/k8s-dashboards.sh` | Port-forwards Grafana (`:3001`) and Prometheus (`:9090`) to this machine |
 | `loadtest/socketio-load.js` | k6 load-test script (CHG-0032) — the Engine.IO/Socket.IO protocol cheatsheet in its header comment is worth reading before touching it |
+| `k8s/base/prometheus-adapter.yaml` | Exposes `chatscale_socket_connections` to Kubernetes' HPA via the external metrics API (CHG-0034) |
+| `k8s/experiments/hpa-cpu.yaml` + `hpa-connections.yaml` | The two HPA configs under comparison — apply one at a time (CHG-0034) |
+| `scripts/hpa-compare.sh` | Applies one HPA, runs the load test, watches it scale (or not) live |
+| `backend/tests/redis-tax.k8s.js` | Measures same-pod vs cross-pod delivery latency (CHG-0035) |
+| `scripts/scaling-efficiency.sh` | Fixed load at 1/2/4 pods, measures throughput/latency at each (CHG-0035) |
 
 ---
 
-## What's left in step 4
+## Phase 4 is complete, and the thesis table's local-scope rows are all measured
 
 Plain-English goal: show that the cluster can **add copies automatically when busy** (not just
 survive failures), and settle the "CPU vs connection count" autoscaling question from PLAN.md §2.2 —
 a chat app's idle WebSocket connections use almost no CPU, so a naive CPU-based autoscaler may not
-react to real load. This needs:
+react to real load. All four pieces are done:
 
-1. ✅ Metrics exposed from the backend (`prom-client`, a `/metrics` endpoint) — done (CHG-0030):
+1. ✅ **Metrics** (CHG-0030): `backend/src/metrics.js`, `GET /metrics` —
    `chatscale_socket_connections`, `chatscale_messages_total`, `chatscale_broadcast_latency_seconds`,
-   plus default Node process metrics. `chatscale_delivery_latency_seconds` is defined but not fed
-   yet — it needs the *receiving* client to report back, which is frontend work saved for the load
-   test below (Phase 6).
-2. ✅ Prometheus + Grafana, in k3d — done (CHG-0031): Prometheus discovers both backend pods via
-   a headless Service + DNS, no RBAC needed; Grafana is fully provisioned (datasource + one
-   dashboard, `uid: chatscale-overview`) with zero manual setup. Reach them with
-   `./scripts/k8s-dashboards.sh`. Deliberately hand-rolled, not the `kube-prometheus-stack` Helm
-   chart PLAN.md originally named — see CHG-0031 for why. **Not yet wired for node/pod CPU and
-   memory** (would need `metrics-server` and/or kube-state-metrics/node-exporter) — that's what
-   step 3 below and the HPA step actually need to compare CPU-based vs connection-based scaling.
-3. ✅ A load-testing script — done (CHG-0032): `loadtest/socketio-load.js`, k6 speaking raw
-   Engine.IO/Socket.IO over WebSocket (the "no Socket.IO client built in" gotcha PLAN.md flagged).
-   Verified at 20 VUs against the real k3d cluster: 100% connect/join success, 328 messages sent
-   and acked, p95 ack latency 17.64ms. **Not yet run at the full 150-VU profile** — that's sized
-   for off-host Grafana Cloud k6 against a real cluster, not this laptop.
-4. A Horizontal Pod Autoscaler (HPA) — first on CPU (needs `metrics-server`, not yet installed),
-   then compare against scaling on connection count (KEDA or prometheus-adapter, reading our
-   existing `chatscale_socket_connections`). Now that the load test exists, this is next.
+   default Node process metrics. (`chatscale_delivery_latency_seconds` is defined but not fed —
+   would need the *receiving* client to report back, a frontend change that was never required for
+   anything that followed.)
+2. ✅ **Prometheus + Grafana** in k3d (CHG-0031), scraping `/metrics`, one dashboard. Reach with
+   `./scripts/k8s-dashboards.sh`. Hand-rolled, not the `kube-prometheus-stack` Helm chart PLAN.md
+   originally named — see CHG-0031 for why.
+3. ✅ **Load test** (CHG-0032): `loadtest/socketio-load.js`, k6 speaking raw Engine.IO/Socket.IO
+   over WebSocket (the "no Socket.IO client built in" gotcha PLAN.md flagged). Verified at 20 VUs:
+   100% connect/join success, 328 messages sent and acked, p95 ack latency ~17ms. The full 150-VU
+   profile (`PROFILE=full`) was never run — it's sized for an off-host load generator against a
+   real multi-node cluster, not this laptop's 2-pod local deployment; not needed once Phase 5 was
+   descoped (r4).
+4. ✅ **Autoscaling comparison** (CHG-0034): `metrics-server` (bundled with k3s, confirmed working)
+   + `prometheus-adapter` (exposes `chatscale_socket_connections` via the external metrics API) +
+   two HPA configs (`k8s/experiments/`). **Measured, the project's strongest single result**: a
+   CPU-based HPA never scaled under the 20-VU chat load (peaked 54%→36%, well under the 60%
+   target); a connection-count-based HPA scaled 2→3 pods within 50 seconds of identical load,
+   confirmed by a real `SuccessfulRescale` Kubernetes event and cross-checked against Prometheus's
+   raw data to rule out a measurement artifact. Full writeup, including two real bugs found and
+   fixed along the way (a cert-dir crash, and a subtle sum/avg double-division that silently halved
+   every reading): [docs/evidence/05-autoscaling.md](evidence/05-autoscaling.md). Run it yourself
+   with `./scripts/hpa-compare.sh cpu` / `./scripts/hpa-compare.sh connections`.
 
-All of this runs locally on k3d — no cloud account needed, and **none ever will be for this
+All of this ran locally on k3d — no cloud account needed, and **none ever will be for this
 project**: Phase 5 (real cloud) is descoped as of 2026-10-20 (r4 amendment in `PLAN.md`, CHG-0033).
-Step 4d (HPA) is the last piece of remaining scope; after that, the write-up (step 6).
+
+**Two more measurements, found missing and then measured (CHG-0035)**, round out PLAN.md's thesis
+table (§1) for everything that doesn't need real cloud infrastructure:
+
+5. ✅ **Redis tax** ([evidence/06](evidence/06-redis-tax.md)): same-pod vs cross-pod delivery
+   latency, n=200 each. **No measurable difference locally** (~1–3ms both ways) — explained, not
+   just reported: a k3d cluster is one Docker daemon on one physical machine, so there's no real
+   network hop for a tax to show up on. A real multi-machine cluster (descoped, r4) would very
+   likely show one.
+6. ✅ **Scaling efficiency** ([evidence/07](evidence/07-scaling-efficiency.md)): fixed load (100
+   VUs, calibrated — 20 VUs showed no saturation at all) at 1, 2, then 4 pods. **p95 message ack
+   latency: 110ms → 85ms → 34ms**, a ~3.2x improvement, while delivery success stayed at 100% even
+   at 1 pod — throughput never collapsed, but latency scaled down roughly with pod count.
+
+**The write-up (step 6) is done: [docs/REPORT.md](REPORT.md) (CHG-0036).** Walks through
+`PLAN.md`'s thesis table row by row, every number traced to a `docs/evidence/0{1..7}-*.md` file and
+an exact command to reproduce it, an estimated cost model (from local resource requests + published
+cloud pricing, since there's no real cloud invoice — `PLAN.md` §9's r4 note), and an explicit
+section on what's deliberately not claimed and why. **The project is complete.**
 
 ---
 
@@ -225,3 +281,16 @@ Step 4d (HPA) is the last piece of remaining scope; after that, the write-up (st
 - Grafana (CHG-0031) has anonymous viewer access and a fixed admin password — fine because it's
   reached exclusively via `kubectl port-forward` on the owner's own machine, and per the r4
   amendment this project will never put it behind a public address, so this isn't a gap to close.
+- `k8s/experiments/hpa-connections.yaml`'s `averageValue: "8"` threshold and `hpa-cpu.yaml`'s
+  `maxReplicas: 6` are tuned for the k6 `local` profile (20 VUs) specifically — raise them if
+  testing against more replicas or VUs (CHG-0034).
+- No true Cluster Autoscaler comparison (adding whole nodes, not just pods) exists or ever will —
+  that needs real multi-node cloud infrastructure, descoped along with Phase 5 (r4). The HPA
+  comparison (CHG-0034) is the pod-level piece of Phase 7 that stayed in scope.
+- Scaling-efficiency (CHG-0035) ran n=1 per pod-count configuration, not PLAN.md's n=3 with a
+  discarded 2-minute warm-up — a real simplification stated plainly in evidence/07, not hidden. The
+  3.2x effect size is large enough that run-to-run noise doesn't explain it, but exact percentile
+  values shouldn't be read as tightly confident.
+- Redis tax's negligible-locally finding (CHG-0035, evidence/06) is specific to this single-
+  Docker-daemon k3d cluster, not a general claim that the Redis hop is free — see that evidence
+  doc for why, and what a real multi-machine deployment would likely show instead.

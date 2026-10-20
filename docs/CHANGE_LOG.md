@@ -51,6 +51,9 @@
 | CHG-0031 | 2026-10-06 | Parth | Infrastructure (Kubernetes) | Prometheus + Grafana deployed into k3d, scraping the backend's `/metrics` via DNS service discovery; one provisioned dashboard (Phase 4, step 2 of 4) | Feature | Low | Verified |
 | CHG-0032 | 2026-10-20 | Parth | Load testing | `loadtest/socketio-load.js`: k6 script speaking raw Engine.IO/Socket.IO over WebSocket (k6 has no Socket.IO client); ramps real throwaway users into a shared space and holds a chat connection each (Phase 4, step 3 of 4) | Feature | Low | Verified |
 | CHG-0033 | 2026-10-20 | Parth | Documentation / Planning | PLAN.md r4: Phase 5 (real cloud) descoped — Azure verification (R-12) never resolved; project scope finalized at local Kubernetes (k3d) | Process | Low | Implemented |
+| CHG-0034 | 2026-10-20 | Parth | Infrastructure (Kubernetes) | HPA autoscaling comparison, CPU vs `chatscale_socket_connections` (`prometheus-adapter`); measured: CPU-based HPA never scaled under chat load, connection-based one scaled correctly in 50s (Phase 4, step 4 of 4 — complete) | Feature | Low | Verified |
+| CHG-0035 | 2026-10-20 | Parth | Experiments / Write-up | PLAN.md Phase 6 measured: Redis tax (negligible locally — explained) and scaling efficiency (p95 latency 110ms->85ms->34ms, 1->2->4 pods) | Feature | Low | Verified |
+| CHG-0036 | 2026-10-20 | Parth | Documentation | docs/REPORT.md: the project's final write-up, synthesizing every measured result (CHG-0023-0035) against PLAN.md's thesis table, with an estimated cost model (step 6 of 6 — project complete) | Documentation | Low | Verified |
 ---
 
 ## 2. Detailed Entries
@@ -2231,6 +2234,240 @@ history (CHG-0009) before writing the "why" section, rather than relying on chat
 Revert `PLAN.md` to its r3 state (pre-amendment) and remove the corresponding notes from
 `docs/STATUS.md`. No code or infrastructure changed, so there is nothing else to undo — this
 entry exists purely to record a scope decision for the project's own history.
+
+---
+
+### CHG-0034 — Autoscaling: CPU vs Connection Count (Phase 4, step 4 of 4 — complete)
+
+| Field | Value |
+|---|---|
+| **Change ID** | CHG-0034 |
+| **Date Raised** | 2026-10-20 |
+| **Date Implemented** | 2026-10-20 |
+| **Author** | Parth |
+| **Module / Component** | Infrastructure (Kubernetes) |
+| **Change Type** | Feature |
+| **Risk Level** | Low |
+| **Status** | Verified |
+
+**Description**
+Final piece of Phase 4: a Horizontal Pod Autoscaler comparison answering PLAN.md §2.2's question —
+does the Kubernetes default (CPU) actually react to chat load, or does connection count matter
+more? Full write-up with real numbers: [docs/evidence/05-autoscaling.md](evidence/05-autoscaling.md).
+
+- **`metrics-server`** — already bundled with k3s/k3d; confirmed working (`kubectl top nodes`),
+  nothing to install.
+- **`k8s/base/prometheus-adapter.yaml`** (new) — exposes `chatscale_socket_connections` (CHG-0030)
+  through Kubernetes' `external.metrics.k8s.io` API, so an HPA can scale on it the same way it
+  scales on CPU. Uses the *external* metrics API rather than the more common *pods* API on
+  purpose: the pods API needs each Prometheus sample to carry `namespace`/`pod` labels matching a
+  real Kubernetes object, which our DNS-discovery-based scrape (CHG-0031) doesn't provide and
+  deliberately avoids the RBAC that would be needed to add them. External metrics sidestep that
+  entirely — the adapter just hands over one aggregate number.
+- **`k8s/experiments/hpa-cpu.yaml` + `hpa-connections.yaml`** (new) — the two HPA configs under
+  comparison. Deliberately **not** wired into `k8s/base/kustomization.yaml`: both target the same
+  `Deployment/backend`, and Kubernetes doesn't prevent two HPAs pointing at one target — it just
+  makes them fight each other, silently. Applied one at a time.
+- **`scripts/hpa-compare.sh`** (new) — applies one HPA, runs `loadtest/socketio-load.js`
+  (CHG-0032), and prints `kubectl get hpa`/`get pods` every 10s so the scaling decision (or lack
+  of one) is visible live, not just in a final summary. Cleans up the HPA it applied on exit.
+
+**Why now:** last item on `docs/STATUS.md`'s step 4 list, raised directly by the owner, who asked
+to "start the metrics-server and HPA setup."
+
+**Files Added**
+- `k8s/base/prometheus-adapter.yaml`, `k8s/base/prometheus-adapter-kube-system-rbac.yaml`,
+  `k8s/experiments/hpa-cpu.yaml`, `k8s/experiments/hpa-connections.yaml`,
+  `scripts/hpa-compare.sh`, `docs/evidence/05-autoscaling.md`
+
+**Files Modified**
+- `k8s/base/kustomization.yaml` (registered `prometheus-adapter.yaml`), `scripts/k8s-up.sh`
+  (waits on the adapter rollout; applies the kube-system RoleBinding separately), `README.md`,
+  `docs/STATUS.md`, `docs/CHANGE_LOG.md`
+
+**Verification — measured against the live k3d cluster, not simulated:**
+- CPU-based HPA: `kubectl apply -f k8s/experiments/hpa-cpu.yaml`, then the k6 `local` profile (20
+  VUs). CPU peaked at 54% (an HTTP registration/bcrypt burst at ramp-up, not the chat traffic
+  itself) then settled at 36% — never crossed the 60% target. Zero `SuccessfulRescale` events;
+  replica count stayed at 2 for the entire run. k6: 328 messages, 100% success.
+- Connection-based HPA: same load, three runs needed to get a trustworthy result (see Known
+  Limitations/bugs below) — the third run showed `chatscale_socket_connections` crossing the
+  8-per-pod target at t+50s and a real `SuccessfulRescale` Kubernetes event at t+60s (2→3 pods),
+  cross-checked against Prometheus's own `query_range` for the same window (a sustained total of
+  20 connections for 65+ seconds) to rule out a measurement artifact rather than just trusting the
+  HPA's own display.
+
+**Known Limitations / defects found and fixed during verification (kept, not hidden — an honest
+account of what broke is a better record than a clean-looking one that skips the debugging):**
+1. **`prometheus-adapter` crashed on startup** (`CrashLoopBackOff`) — tried to generate its
+   self-signed serving cert in a non-writable directory. Fixed with an explicit `--cert-dir`
+   pointed at an `emptyDir` volume.
+2. **A real double-division bug** (not the staleness it first looked like). The first two
+   connection-based HPA runs plateaued at exactly half the true value and never scaled. Initially
+   suspected the adapter's 30s metric-refresh interval was too coarse for a ~90s test and tightened
+   it to 10s — that turned out to be a red herring; the third run still plateaued at half-value
+   with the faster interval. The actual cause: an `AverageValue`-type HPA target divides the
+   external metric by the current replica count *itself*; the adapter's PromQL was already
+   computing `avg()` (dividing by 2), so the value got halved twice. Caught by comparing the HPA's
+   displayed value against Prometheus's own `query_range` for the identical window, not assumed —
+   the true sum was a sustained 20, the HPA showed 5, exactly `20÷2÷2`. Fixed by changing the
+   adapter's `metricsQuery` from `avg()` to `sum()`.
+3. A kustomize gotcha found and fixed *before* applying anything (CHG-0031's lesson repeated):
+   `k8s/base/kustomization.yaml`'s `namespace: chatscale` would have silently overwritten a
+   RoleBinding's explicit `kube-system` namespace, breaking the aggregated API server's auth.
+   Caught via `kubectl kustomize` dry-run before applying, same discipline as CHG-0031. Fixed by
+   extracting that one object into `prometheus-adapter-kube-system-rbac.yaml`, applied separately.
+4. `k8s/experiments/hpa-connections.yaml`'s `averageValue: "8"` threshold and `hpa-cpu.yaml`'s
+   `maxReplicas: 6` are both tuned for the k6 `local` profile (20 VUs) specifically — PLAN.md's
+   full 150-VU profile would need different numbers, same caveat as CHG-0032's load test itself.
+5. No true Cluster Autoscaler comparison (adding whole nodes, not just pods) — that's cloud-only
+   and was descoped along with Phase 5 (CHG-0033); this HPA comparison is the pod-level piece of
+   Phase 7 that PLAN.md's own r4 amendment marked as still fully in scope locally.
+
+**Rollback Plan**
+Delete `k8s/base/prometheus-adapter.yaml`, `prometheus-adapter-kube-system-rbac.yaml`,
+`k8s/experiments/`, and `scripts/hpa-compare.sh`; remove the `prometheus-adapter.yaml` line from
+`kustomization.yaml` and the adapter rollout wait from `k8s-up.sh`. Neither HPA is applied by
+default (both live in `k8s/experiments/`, outside the base kustomization), so a fresh
+`./scripts/k8s-up.sh` run is unaffected either way — nothing here changes the app's normal
+behavior.
+
+---
+
+### CHG-0035 — Phase 6 Measured: Redis Tax and Scaling Efficiency
+
+| Field | Value |
+|---|---|
+| **Change ID** | CHG-0035 |
+| **Date Raised** | 2026-10-20 |
+| **Date Implemented** | 2026-10-20 |
+| **Author** | Parth |
+| **Module / Component** | Experiments / Write-up |
+| **Change Type** | Feature |
+| **Risk Level** | Low |
+| **Status** | Verified |
+
+**Description**
+PLAN.md's thesis table (§1) names two measurements — "Cost of fix" (same-pod vs cross-pod Redis
+delivery latency) and "Scaling" (throughput/latency at 1/2/4 pods) — that were planned from the
+start (PLAN.md Phase 6) but never actually run; both are fully local and were not part of the r4
+cloud descope, just genuinely overlooked while CHG-0030–0034 focused on metrics/load-test/HPA.
+Caught and raised directly by the owner before starting the project's final write-up, rather than
+let the report quietly omit or fabricate them.
+
+- **Redis tax** ([docs/evidence/06-redis-tax.md](evidence/06-redis-tax.md)): new
+  `backend/tests/redis-tax.k8s.js`, modeled on the existing `cross-copy.test.js`/`failover.k8s.js`
+  pattern — finds a same-pod and a cross-pod receiver pairing, measures n=200 sequential
+  send-to-receive round trips for each. **Result: no measurable difference** (both ~1–3ms) — not
+  claimed as "the Redis tax is zero" in general, but explained honestly: a k3d cluster is multiple
+  containers on one Docker daemon on one physical machine, so there's no real network hop for a
+  tax to show up on. A genuine, stated limitation of local-only measurement, not glossed over.
+- **Scaling efficiency** ([docs/evidence/07-scaling-efficiency.md](evidence/07-scaling-efficiency.md)):
+  new `scripts/scaling-efficiency.sh` + a `fixed` load profile added to
+  `loadtest/socketio-load.js` (k6's `constant-vus` executor — a steady VU count, not a ramp, so
+  throughput is comparable apples-to-apples across pod counts, per PLAN.md's "fixed load, pods
+  pinned at 1 → 2 → 4"). Calibrated the VU count first (100, not the 20 Evidence 05 used — at 20
+  VUs nothing is saturated enough to show a scaling difference at all). **Result: message delivery
+  never failed at any pod count (100% success, ~1900 messages, all three runs), but p95 ack
+  latency dropped 110ms → 85ms → 34ms as pods went 1 → 2 → 4** — roughly a 3.2x improvement,
+  monotonic and large enough that run-to-run noise doesn't explain it.
+
+**Why now:** raised directly by the owner mid-conversation, in response to being asked to "move on
+to the write-up" — correctly flagged that writing a polished final report before these two
+measurements existed would mean either silently omitting two rows of the project's own thesis
+table or, worse, writing around the gap. Measuring first was chosen over writing the gap into the
+report.
+
+**Files Added**
+- `backend/tests/redis-tax.k8s.js`, `scripts/scaling-efficiency.sh`,
+  `docs/evidence/06-redis-tax.md`, `docs/evidence/07-scaling-efficiency.md`
+
+**Files Modified**
+- `loadtest/socketio-load.js` (added the `fixed` load profile), `docs/STATUS.md`,
+  `docs/CHANGE_LOG.md`
+
+**Verification**
+Both measured against the live k3d cluster, not simulated. Redis tax: run twice (n=60, then
+n=200) for consistency — same shape both times, no directional gap. Scaling efficiency: calibrated
+VU count empirically (30-second trial run showed p95 96ms at 100 VUs/1 pod vs ~17ms at 20
+VUs/2 pods from Evidence 05, confirming enough headroom to see a real effect) before committing to
+the full 3-configuration, ~8-minute experiment; checked `checks_failed: 0.00%` across all three
+runs before trusting the latency numbers; confirmed the cluster returned to a clean 2-pod baseline
+(`kubectl -n chatscale get pods -l app=backend`, `get hpa`) afterward.
+
+**Known Limitations**
+1. Scaling-efficiency ran n=1 per configuration (one 90s run each), not PLAN.md's n=3 with a
+   discarded 2-minute warm-up — a real simplification to keep total experiment time reasonable,
+   stated in the evidence doc rather than assumed away. Good enough to see a clear, large,
+   monotonic trend; not rigorous enough for tight confidence intervals on the exact percentiles.
+2. Redis tax's negligible-locally result is specific to a single-Docker-daemon k3d cluster; a real
+   multi-machine deployment (descoped, r4) would very likely show a nonzero tax from genuine
+   network hops — recorded as a limitation of what local infrastructure can measure, not resolved.
+
+**Rollback Plan**
+Delete `backend/tests/redis-tax.k8s.js`, `scripts/scaling-efficiency.sh`, and the two evidence
+files; revert the `fixed` profile addition in `loadtest/socketio-load.js`. Nothing else depends on
+any of this — purely additive measurement work.
+
+---
+
+### CHG-0036 — Final Report (`docs/REPORT.md`) — Step 6 of 6, Project Complete
+
+| Field | Value |
+|---|---|
+| **Change ID** | CHG-0036 |
+| **Date Raised** | 2026-10-20 |
+| **Date Implemented** | 2026-10-20 |
+| **Author** | Parth |
+| **Module / Component** | Documentation |
+| **Change Type** | Documentation |
+| **Risk Level** | Low |
+| **Status** | Verified |
+
+**Description**
+`docs/REPORT.md`: the project's final write-up, the last item on `docs/STATUS.md`'s step list.
+Walks through `PLAN.md`'s original thesis table (§1) row by row, with every claim traced to a
+`docs/evidence/*.md` file and an exact command to reproduce it — no number in the report is
+unsourced. Structure: the hypothesis and three-substrate reproduction of the failure, the fix, the
+Redis tax (CHG-0035), scaling efficiency (CHG-0035), the autoscaling comparison (CHG-0034, the
+project's strongest single result), an explicit section naming what's *not* claimed and why
+(Cluster Autoscaler, zone failure, managed-DB failover, a real cloud invoice — all needed
+infrastructure that CHG-0033's r4 amendment deliberately dropped), an estimated cost model (per
+`PLAN.md` §9's r4 note — labelled as an estimate throughout, not presented as a measured bill), a
+methodology/honesty section, and a reproduction guide.
+
+**Why a single comprehensive doc, not split per PLAN.md §9's original `docs/COSTS.md` naming:**
+asked directly; the owner chose one document over splitting the cost model into its own file,
+since every section references the same shared evidence and thesis table — a single narrative
+reads better than cross-referencing two files for one story.
+
+**Why now:** last item on `docs/STATUS.md`'s step list. Writing it surfaced the Phase 6 gap closed
+by CHG-0035 immediately beforehand — raised directly by the owner rather than let the report either
+omit two rows of its own thesis table or claim them without evidence.
+
+**Files Added**
+- `docs/REPORT.md`
+
+**Files Modified**
+- `docs/STATUS.md`, `README.md`, `docs/CHANGE_LOG.md`
+
+**Verification**
+Every quoted number cross-checked against its source evidence file while writing (not
+transcribed from memory): Evidence 01/02/03/04's headline results reread directly from those
+files; Evidence 05/06/07's numbers reused from this session's own measurements. One overreaching
+claim caught and corrected before finalizing — an initial draft said "`git log` shows
+[`adapter.js`] as the entire implementation" without having actually run that command; corrected
+to state the file's line count instead, which was verified.
+
+**Known Limitations**
+Inherits every limitation already stated in the evidence files it cites (n=1 scaling-efficiency
+runs, local-only Redis tax, no Cluster Autoscaler/zone/DB-failover data, an estimated not measured
+cost model) — the report states them again at point of use rather than only in `docs/STATUS.md`,
+so a reader of the report alone (without `STATUS.md`) still sees them.
+
+**Rollback Plan**
+Delete `docs/REPORT.md`. Nothing else depends on it — it's a synthesis of work already recorded
+elsewhere, not a dependency for anything.
 
 ---
 

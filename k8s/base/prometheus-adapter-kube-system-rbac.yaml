@@ -1,0 +1,21 @@
+# Split out from prometheus-adapter.yaml: this RoleBinding must live in kube-system (that's where
+# the "extension-apiserver-authentication-reader" Role it binds to exists), but everything else in
+# this kustomization gets forced into the chatscale namespace by kustomization.yaml's top-level
+# `namespace:` field — including, incorrectly, an explicit `metadata.namespace` already set on a
+# resource. Found by inspecting `kubectl kustomize` output directly, not assumed: kustomize
+# overwrote this RoleBinding's `kube-system` to `chatscale`, which would have silently broken the
+# aggregated API server's ability to authenticate requests. Applied separately, outside `kubectl
+# apply -k` (see scripts/k8s-up.sh) — this is the one piece of prometheus-adapter that isn't.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: prometheus-adapter-auth-reader
+  namespace: kube-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: extension-apiserver-authentication-reader
+subjects:
+  - kind: ServiceAccount
+    name: prometheus-adapter
+    namespace: chatscale

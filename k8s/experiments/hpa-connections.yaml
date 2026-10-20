@@ -1,0 +1,33 @@
+# The other half of the Phase 7 autoscaler comparison — same backend Deployment, scaled on
+# chatscale_socket_connections (CHG-0030) instead of CPU, via prometheus-adapter's
+# external.metrics.k8s.io API (k8s/base/prometheus-adapter.yaml). See hpa-cpu.yaml for the CPU
+# side and why only one of the two should ever be applied at once.
+#
+# averageValue: "8" — tuned for a LOCAL k6 run (loadtest/socketio-load.js, PROFILE=local, 20 VUs),
+# not PLAN.md's full 150-VU cloud profile. 20 VUs over the starting 2 pods averages 10
+# connections/pod, just over this threshold, so the default local rehearsal is itself enough to
+# trigger a scale-up (to 3 pods: ceil(2 * 10/8) = 3) without needing the full profile. Raise this
+# if testing against more replicas or more VUs.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: backend-hpa-connections
+  namespace: chatscale
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: backend
+  minReplicas: 2
+  maxReplicas: 6
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+  metrics:
+    - type: External
+      external:
+        metric:
+          name: chatscale_socket_connections
+        target:
+          type: AverageValue
+          averageValue: "8"

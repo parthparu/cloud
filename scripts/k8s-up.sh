@@ -44,6 +44,9 @@ fi
 
 echo "==> Applying manifests (kustomize overlay: local)"
 kubectl apply -k "$ROOT/k8s/overlays/local"
+# One RoleBinding has to live in kube-system (that's where the Role it binds to exists) and so
+# can't go through the namespace-forcing kustomization above — see its own file for why.
+kubectl apply -f "$ROOT/k8s/base/prometheus-adapter-kube-system-rbac.yaml"
 
 # REDIS_URL normally comes from the backend-config ConfigMap (envFrom). An explicit env: entry
 # on the Deployment overrides envFrom for the same name, so that's how we flip modes without
@@ -75,12 +78,15 @@ kubectl -n "$NS" rollout status deployment/prometheus --timeout=240s
 prometheus_status=$?
 kubectl -n "$NS" rollout status deployment/grafana --timeout=240s
 grafana_status=$?
+kubectl -n "$NS" rollout status deployment/prometheus-adapter --timeout=240s
+adapter_status=$?
 set -e
-if [ "$prometheus_status" != 0 ] || [ "$grafana_status" != 0 ]; then
+if [ "$prometheus_status" != 0 ] || [ "$grafana_status" != 0 ] || [ "$adapter_status" != 0 ]; then
   echo
-  echo "Prometheus/Grafana are not ready yet (the app itself is fine). If this is a fresh cluster,"
-  echo "the images are probably still pulling: 'kubectl -n $NS get pods' to check, or nudge a slow"
-  echo "pull along with 'docker exec <node> crictl pull <image>' on the specific k3d node."
+  echo "Prometheus/Grafana/prometheus-adapter are not ready yet (the app itself is fine). If this"
+  echo "is a fresh cluster, the images are probably still pulling: 'kubectl -n $NS get pods' to"
+  echo "check, or nudge a slow pull along with 'docker exec <node> crictl pull <image>' on the"
+  echo "specific k3d node."
 fi
 if [ "$pg_status" != 0 ] || [ "$redis_status" != 0 ] || [ "$backend_status" != 0 ] || [ "$frontend_status" != 0 ]; then
   echo
@@ -106,5 +112,6 @@ echo
 echo "Try:  kubectl -n chatscale get pods -w"
 echo "      kubectl -n chatscale delete pod <name>        (kill one, watch it get replaced)"
 echo "      ./scripts/k8s-dashboards.sh                   (Grafana + Prometheus, localhost:3001/:9090)"
+echo "      ./scripts/hpa-compare.sh cpu|connections      (autoscaler comparison, docs/evidence/05)"
 echo "      ./scripts/k8s-down.sh                         (tear the cluster down)"
 echo "------------------------------------------------------------"

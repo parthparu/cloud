@@ -4,7 +4,8 @@ Group chat for people who already know each other: accounts with optional two-st
 verification, friends, **spaces** with text channels (join by invite link or by username
 invitation), real-time messages, and a light/dark theme.
 
-It is also the subject of a cloud-scaling study — see [PLAN.md](PLAN.md) for the experiment,
+It is also the subject of a cloud-scaling study — see **[docs/REPORT.md](docs/REPORT.md) for the
+final write-up and every measured result**, [PLAN.md](PLAN.md) for the original experiment plan,
 [docs/STATUS.md](docs/STATUS.md) for where things currently stand (read this first in a new
 session), and [docs/CHANGE_LOG.md](docs/CHANGE_LOG.md) for every change made so far.
 
@@ -95,7 +96,8 @@ REDIS_OFF=1 ./scripts/k8s-up.sh  # same, but without Redis: the original failure
 ```
 
 Manifests live in `k8s/` as a Kustomize base + a `local` overlay (its own throwaway in-cluster
-PostgreSQL — never Supabase); a cloud overlay is a later addition, not a rewrite. First run on a
+PostgreSQL — never Supabase); `local/` is the only overlay this project will have (see `PLAN.md`'s
+r4 amendment — a real cloud deployment was considered and deliberately dropped). First run on a
 fresh cluster pulls several images from inside the cluster (not this Mac's Docker cache) and can
 take a few minutes on a slow network — re-running the script picks up where it left off.
 
@@ -106,6 +108,21 @@ k3d cluster, scraping it automatically — nothing to configure:
 ```bash
 ./scripts/k8s-dashboards.sh      # Grafana: http://localhost:3001  Prometheus: http://localhost:9090
 ```
+
+### Autoscaling: CPU vs connection count
+
+`metrics-server` (bundled with k3s) and `prometheus-adapter` (exposing `chatscale_socket_connections`
+through Kubernetes' external metrics API) let an HPA scale on either signal. `k8s/experiments/`
+has both HPA configs — apply only one at a time, they target the same Deployment:
+
+```bash
+./scripts/hpa-compare.sh cpu           # applies the CPU-based HPA, runs the load test, watches it
+./scripts/hpa-compare.sh connections   # same, for the connection-count-based HPA
+```
+
+Result, measured against this cluster: the CPU-based HPA never scaled under realistic chat load
+(peaked at 36% against a 60% target); the connection-count-based one scaled from 2 to 3 pods
+within 50 seconds of the same load. See [docs/evidence/05-autoscaling.md](docs/evidence/05-autoscaling.md).
 
 ### Tests
 
