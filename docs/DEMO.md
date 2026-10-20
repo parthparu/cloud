@@ -1,7 +1,9 @@
 # Demo Guide — "Alice and Bob": why a chat app breaks when you add servers
 
-**Length:** about 7 minutes (5 for the problem, 2 for the fix) · **Needs:** this laptop, no internet (unless using Supabase) ·
-**Presenters:** Parth, B118
+**Length:** about 7 minutes for Parts 1–2 (5 for the problem, 2 for the fix); **+3 minutes for the
+optional Part 3** (what we found at scale on real Kubernetes) if time allows and it was rehearsed
+successfully the night before · **Needs:** this laptop, no internet (unless using Supabase); Part 3
+also needs Docker Desktop and a rehearsed k3d cluster · **Presenters:** Parth, B118
 
 ---
 
@@ -118,7 +120,7 @@ menu bar says "Docker Desktop is running".
 | 5 | Point at **Bob's window** — it appears **instantly, with a green highlight** | "Bob gets it immediately. The highlight means it arrived *live*, not from a page reload." |
 | 6 | Point at the terminal: `delivered to 1 socket(s) on this copy + 1 on other copies via Redis` | "copy-A published it to Redis, copy-B picked it up and delivered it to Bob." |
 | 6b | *(optional, strong)* Show the **Redis watcher** (below) and have Alice send one more message | "This is Redis itself, live. Every line is one copy telling all the others something." |
-| 7 | Close | "The fix works — but it isn't free. Every message now makes an extra trip through Redis, and if Redis goes down, we're back to the broken behaviour. Measuring both of those, and running this on cloud Kubernetes with automatic scaling, is the rest of our project." |
+| 7 | Close | "The fix works — but it isn't free. Every message now makes an extra trip through Redis, and if Redis goes down, we're back to the broken behaviour. We measured both of those, and a lot more, on a real Kubernetes cluster — that's Part 3, if we have time." |
 
 ### The Redis watcher (for step 6b)
 
@@ -146,6 +148,55 @@ know has to be shared."*
 
 (`npm run watch-redis -- --all` also shows typing indicators and the copies' internal questions to
 each other.)
+
+---
+
+## Part 3 — what we found at scale (optional, ~3 minutes, if there's time)
+
+**Only do this if you rehearsed it successfully tonight.** This part runs on a real Kubernetes
+cluster (k3d) instead of two plain processes, and clusters can come up confused after the laptop
+has slept (see "Before tomorrow" below) — if it doesn't come up clean in rehearsal, skip straight
+to showing [docs/REPORT.md](REPORT.md) instead. A good demo of real results beats a live failure
+of a fancier one.
+
+**Setup**, before faculty arrive:
+```bash
+cd ~/dev/wp_project
+./scripts/k8s-up.sh              # ~1-2 min on a warm cluster; brings up the app + Prometheus + Grafana
+./scripts/k8s-dashboards.sh      # leave this running in its own terminal/tab
+```
+Open Grafana at **http://localhost:3001** in a browser tab (no login needed) — the "ChatScale —
+Backend Overview" dashboard. Leave it open and idle until this part of the demo.
+
+| # | Do | Say |
+|---|---|---|
+| 1 | Switch to the Grafana tab | "Same bug, same fix — now we ask the next question: when this runs on Kubernetes, which signal should tell it to add more servers automatically?" |
+| 2 | Point at the empty "Connections by pod" panel | "Kubernetes' default answer is CPU. A chat app's idle connections barely use any — so does that default actually work for us?" |
+| 3 | In a terminal: `./scripts/hpa-compare.sh connections` | "This sends 20 simulated users into the app, holding real connections, while Kubernetes watches a different signal: how many people are actually connected, not CPU." |
+| 4 | Point at the terminal output ticking up, then the pod count going 2 → 3 | "There — Kubernetes just started a third copy of the server, on its own, because connection count crossed our threshold. No CPU spike needed." |
+| 5 | Point at the Grafana dashboard reacting live | "Same thing, live on the dashboard." |
+| 6 | Close | "We also ran the identical test with CPU as the signal instead — it never scaled at all, the whole run. That's our strongest finding: for a chat app, the number ops teams usually trust by default is the wrong one." |
+
+**If it's running late or something looks off:** skip the live trigger (step 3) and just talk
+through [docs/REPORT.md](REPORT.md)'s §6 with the dashboard open — the numbers are the same, the
+story's the same, and nothing can go wrong mid-sentence.
+
+### Before tomorrow — a short rehearsal, not optional
+
+This part of the demo depends on live infrastructure in a way Part 1/2 don't. Run through it
+**once, tonight**, start to finish:
+
+1. `./scripts/k8s-up.sh` — if the cluster was already up from an earlier session and Docker Desktop
+   has been restarted since, there's a real chance a node comes back confused (we hit this exact
+   failure earlier this project — a k3d node crash-looping with a networking error after Docker
+   restarted). The fix, if it happens: `k3d cluster delete chatscale && ./scripts/k8s-up.sh` —
+   budget 3-4 minutes for a full rebuild, done **tonight**, not discovered live tomorrow.
+2. Confirm `kubectl -n chatscale get pods` shows everything `Running` before you stop for the night.
+3. Run `./scripts/hpa-compare.sh connections` once end to end and confirm you actually see the pod
+   count change, the way the table above describes. If it doesn't scale within the ~2 minutes the
+   script runs, don't debug it live tomorrow — fall back to the "something looks off" plan above.
+4. Leave the cluster running overnight if practical (`k3d cluster list` to check it's still up in
+   the morning) — avoids re-running step 1 under time pressure before faculty arrive.
 
 ---
 
@@ -180,7 +231,35 @@ it dies).
 
 **"Is this realistic, or just a toy?"**
 Every chat product that scales (Slack, Discord, WhatsApp Web) has to solve this. The same app, same
-code, runs here on a laptop and later on Kubernetes in the cloud; only the number of copies changes.
+code, runs here on a laptop, in Docker, and on a real Kubernetes cluster — only the number of
+copies changes.
+
+**"Did you test this on real Kubernetes, or just simulate it?"**
+Real Kubernetes (k3d — a real cluster, running locally rather than in a data center). Same
+container images, same manifests a cloud deployment would use. We reproduced the break, the fix,
+and a pod-crash recovery test on it, then measured Prometheus metrics, load test behavior, and
+autoscaling, all against real running pods — see [docs/REPORT.md](REPORT.md).
+
+**"What did you find about autoscaling?"**
+Kubernetes' default signal for "add more servers automatically" is CPU usage. We measured it
+directly against this app under realistic load: it never triggered, even under sustained chat
+traffic, because WebSocket connections barely use CPU. A signal based on connection count instead
+scaled correctly within 50 seconds of the same load. Full numbers in
+[docs/evidence/05-autoscaling.md](evidence/05-autoscaling.md).
+
+**"Did you deploy this to a real cloud (AWS/Azure/GCP)?"**
+No — deliberately. We planned to (Azure for Students), but their student verification never
+resolved after weeks of back-and-forth with their support, and we made a call to stop chasing a
+second provider's signup process rather than spend more time on that instead of the actual
+engineering. Everything we did report is measured on real Kubernetes, just not real cloud hardware
+across physical machines — that distinction, and what it does and doesn't change, is written up
+explicitly in [docs/REPORT.md](REPORT.md) §7.
+
+**"What would this cost to run for real?"**
+We didn't have a real cloud bill to measure, so we estimated from what we did measure (how much
+CPU/memory one server actually needs under load) against a cloud provider's published pricing —
+roughly $240–270/month for 10,000 concurrent connections. Stated as an estimate, not a quote — see
+[docs/REPORT.md](REPORT.md) §8.
 
 ---
 
@@ -195,13 +274,30 @@ code, runs here on a laptop and later on Kubernetes in the cloud; only the numbe
 | `--fixed` says Docker is needed | Open Docker Desktop, wait until it's running, start again |
 | "Request failed (404)" | The backends are older than the frontend (new feature added since they started). Ctrl-C the demo and start it again |
 | Asked to sign in again | Normal after restarting; each window keeps its own session |
+| **Part 3:** `k3d cluster list` shows nothing, or pods stuck `Pending`/`CrashLoopBackOff` | Skip Part 3 — talk through `docs/REPORT.md` §6 with Grafana open instead (or a screenshot if Grafana's down too). Don't try to fix a confused cluster live; `k3d cluster delete chatscale && ./scripts/k8s-up.sh` takes a few minutes, too long mid-demo |
+| **Part 3:** `hpa-compare.sh connections` runs but the pod count never changes | Same fallback — this was supposed to be caught in last night's rehearsal; don't debug it live |
 
-**Stop the demo:** Ctrl-C in the demo terminal stops everything.
+**Stop the demo:** Ctrl-C in the demo terminal stops everything. For Part 3, also Ctrl-C the
+`k8s-dashboards.sh` terminal; `./scripts/k8s-down.sh` tears the cluster down if you're fully done.
 
 ---
 
 ## Evidence already recorded
 
+**[docs/REPORT.md](REPORT.md) is the one document that ties all of this together** — hand faculty
+that link if they ask for a write-up, or want to read the numbers afterward.
+
 - [docs/evidence/01-two-copies-break.md](evidence/01-two-copies-break.md) — the failure, with
   logs and the database row.
 - [docs/evidence/02-redis-fix.md](evidence/02-redis-fix.md) — the fix, measured both ways.
+- [docs/evidence/03-graceful-failover.md](evidence/03-graceful-failover.md) — Docker Compose, a
+  stopped copy's users move to the survivor.
+- [docs/evidence/04-kubernetes.md](evidence/04-kubernetes.md) — same experiment on real Kubernetes
+  pods, plus a pod-kill chaos test (replacement scheduled in 7s).
+- [docs/evidence/05-autoscaling.md](evidence/05-autoscaling.md) — **the project's strongest
+  result**: CPU-based autoscaling never reacts to chat load; connection-count-based autoscaling
+  does, in 50 seconds. (Part 3 above demonstrates this live.)
+- [docs/evidence/06-redis-tax.md](evidence/06-redis-tax.md) — what the Redis fix costs in latency
+  (negligible on this local setup — explained).
+- [docs/evidence/07-scaling-efficiency.md](evidence/07-scaling-efficiency.md) — message latency at
+  1, 2, and 4 server copies under identical load (110ms → 85ms → 34ms).

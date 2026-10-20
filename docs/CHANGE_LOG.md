@@ -54,6 +54,7 @@
 | CHG-0034 | 2026-10-20 | Parth | Infrastructure (Kubernetes) | HPA autoscaling comparison, CPU vs `chatscale_socket_connections` (`prometheus-adapter`); measured: CPU-based HPA never scaled under chat load, connection-based one scaled correctly in 50s (Phase 4, step 4 of 4 — complete) | Feature | Low | Verified |
 | CHG-0035 | 2026-10-20 | Parth | Experiments / Write-up | PLAN.md Phase 6 measured: Redis tax (negligible locally — explained) and scaling efficiency (p95 latency 110ms->85ms->34ms, 1->2->4 pods) | Feature | Low | Verified |
 | CHG-0036 | 2026-10-20 | Parth | Documentation | docs/REPORT.md: the project's final write-up, synthesizing every measured result (CHG-0023-0035) against PLAN.md's thesis table, with an estimated cost model (step 6 of 6 — project complete) | Documentation | Low | Verified |
+| CHG-0037 | 2026-10-20 | Parth | Documentation | docs/DEMO.md: added optional Part 3 (live Kubernetes/Grafana/autoscaling demo), new FAQ entries, and a rehearsal checklist, for a faculty presentation the next day | Documentation | Low | Implemented |
 ---
 
 ## 2. Detailed Entries
@@ -2468,6 +2469,74 @@ so a reader of the report alone (without `STATUS.md`) still sees them.
 **Rollback Plan**
 Delete `docs/REPORT.md`. Nothing else depends on it — it's a synthesis of work already recorded
 elsewhere, not a dependency for anything.
+
+---
+
+### CHG-0037 — DEMO.md: Covering the New Results
+
+| Field | Value |
+|---|---|
+| **Change ID** | CHG-0037 |
+| **Date Raised** | 2026-10-20 |
+| **Date Implemented** | 2026-10-20 |
+| **Author** | Parth |
+| **Module / Component** | Documentation |
+| **Change Type** | Documentation |
+| **Risk Level** | Low |
+| **Status** | Implemented |
+
+**Description**
+`docs/DEMO.md` (the faculty-facing two-copy break/fix presentation script, last touched before
+CHG-0030) updated to cover everything measured since: metrics, Prometheus/Grafana, the autoscaling
+finding, Redis tax, and scaling efficiency. Raised directly by the owner, with a same-day
+deadline — a faculty presentation the next day.
+
+- **New optional "Part 3 — what we found at scale"** (~3 minutes): live-demos the project's
+  strongest result (CHG-0034) — triggers `./scripts/hpa-compare.sh connections` against the real
+  k3d cluster and watches a pod get added via Grafana + the terminal, narrated against the CPU-HPA
+  result that never scaled. Explicitly marked **optional and rehearsal-gated**: live Kubernetes
+  infrastructure is exactly the kind of thing this project has already seen fail unpredictably
+  (the k3d crash-loop-after-sleep incident, documented in `docs/STATUS.md`) — the section leads
+  with "only do this if you rehearsed it successfully tonight" and gives an explicit no-fuss
+  fallback (talk through `docs/REPORT.md` §6 with the dashboard open instead) rather than risk
+  debugging live infrastructure in front of an audience.
+- **A "Before tomorrow" rehearsal checklist** specific to Part 3 — run `k8s-up.sh` once tonight
+  (catches a confused cluster with time to fix it), confirm all pods `Running`, run
+  `hpa-compare.sh connections` once end to end and confirm it actually scales, leave the cluster up
+  overnight if practical.
+- **Six new FAQ entries** anticipating the obvious follow-ups a working Kubernetes demo invites:
+  real vs. simulated Kubernetes, the autoscaling finding, why no real cloud deployment (the r4
+  descope, stated plainly — not glossed over), and the estimated cost model.
+- **Two new troubleshooting rows**, pointing at the same "skip Part 3, talk through the report
+  instead" fallback rather than inventing a new recovery path under time pressure.
+- **"Evidence already recorded"** extended from 2 entries (01–02) to all 7, with
+  `docs/REPORT.md` called out first as the one document to hand faculty if asked for a write-up.
+
+**Why now:** raised directly by the owner, same-day, ahead of a faculty presentation the next day —
+explicitly asked "how do I demonstrate this to the faculty tomorrow" alongside the DEMO.md update
+request, so the rehearsal checklist and fallback framing were written with that real deadline and
+risk tolerance in mind, not as generic advice.
+
+**Files Modified**
+- `docs/DEMO.md`, `docs/CHANGE_LOG.md`
+
+**Verification**
+Read back for internal consistency (table formatting, cross-references to `docs/REPORT.md` and
+`docs/evidence/05-autoscaling.md`, which both exist) rather than re-run live — Part 3's actual
+commands (`k8s-up.sh`, `hpa-compare.sh connections`, `k8s-dashboards.sh`) were already verified
+working end to end earlier this session (CHG-0034's own verification), so this change only needed
+checking that the demo script's instructions match what those commands actually do and output.
+
+**Known Limitations**
+1. Part 3 has not been rehearsed by the owner yet — the document instructs them to do so tonight,
+   but that rehearsal itself is outside what this change can verify.
+2. No updated Loom/screen recording exists as a non-live fallback beyond "talk through the report
+   with a screenshot" — a recorded run would be a stronger fallback than a live screenshot, but
+   wasn't in scope for a same-day documentation update.
+
+**Rollback Plan**
+Revert `docs/DEMO.md` to its pre-CHG-0037 state (Parts 1–2 only, FAQ without the six new entries).
+Nothing else depends on it — Parts 1–2 work identically either way.
 
 ---
 
