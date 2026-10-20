@@ -1,14 +1,55 @@
 # ChatScale — Project Plan
 
 **Document ID:** WP-PLAN-001
-**Revision:** 3 (supersedes r2 of 2026-09-20)
+**Revision:** 4 (supersedes r3 of 2026-09-20) — **see the r4 amendment note directly below before
+reading anything else: Phase 5 (real cloud) is descoped, project scope now ends at local
+Kubernetes (k3d)**
 **Owner:** Parth
 **Base repository:** `anjalipatil15/wp_project` (branch `main`, local only — nothing pushed)
-**Date:** 2026-09-20
-**Status:** Draft — Phase 0 not started
-**Cloud:** Microsoft Azure (AKS + managed services), funded by Azure for Students
-**Budget:** $100 student credit (redeemable via GitHub Student Developer Pack), **no credit card on
-file**. Target spend ≤ $15. **The binding constraint is vCPU quota, not money — see §6.1.**
+**Date:** 2026-09-20 (r4 amendment: 2026-10-20)
+**Status:** Phases 0–4 (steps 1–3 of 4) complete and pushed; see `docs/STATUS.md` for live status,
+not this line
+**Cloud:** **None — descoped as of r4.** Originally Microsoft Azure (AKS + managed services),
+funded by Azure for Students; see the amendment note for why
+**Budget:** N/A — no cloud account was ever opened. (Historical: $100 Azure for Students credit via
+GitHub Student Developer Pack, no card on file, target spend ≤ $15, binding constraint was vCPU
+quota — see §6.1, now historical.)
+
+---
+
+## r4 Amendment (2026-10-20) — Phase 5 (real cloud) descoped
+
+**Decision: this project's scope now ends at local Kubernetes (k3d). Phase 5 (Azure/AKS) and
+everything that depended on it (cloud-only parts of Phase 8, all of Phase 9) are dropped, not
+deferred.**
+
+**Why.** Azure for Students' automated verification rejected the `nmims.in` institutional email on
+2026-09-20 (CHG-0009, risk R-12). Manual SheerID review was pursued over the following weeks
+(CHG-0009's R-12 mitigation chain) but never resolved — SheerID lost the original ticket and asked
+for a resubmission, which ran into further friction (no Microsoft account existed under that email;
+the public-facing "student pricing" flow is for discounted Microsoft 365, a different product from
+the Azure credit, and is easy to land on by mistake). R-12's own decision point said to switch to
+GCP or DigitalOcean if Azure stayed unresolved past Phase 4 — Phase 4 is now done, so that decision
+point has been reached. Rather than spend further time on a second cloud provider's signup process,
+the owner chose to stop at local Kubernetes.
+
+**What this keeps, unchanged:** every phase through Phase 4 (baseline, containerisation, the
+break/fix experiment, Kubernetes on k3d, instrumentation, load testing) is complete and stands on
+its own as a full result — the bug, the fix, and the evidence for both, reproduced identically on
+Docker Compose and on real Kubernetes pods, with metrics and load testing on top. Phase 7's
+pod-level autoscaling (HPA, CPU vs connection count) is **still in scope** — it runs on k3d, no
+cloud needed, and is this project's next step.
+
+**What this drops:** anything that specifically needs more than one physical machine — a real
+Cluster Autoscaler adding whole VMs, an actual availability-zone failure, a public internet-
+reachable URL, and a managed database failover. These are Phase 5, Phase 8 items 2–4, and all of
+Phase 9 (Azure Blob Storage was always its only stretch goal). §§3–6 and §9 below describe the
+original cloud plan and reasoning **as historical record, not as a remaining task** — kept because
+"we planned for a real multi-machine cloud deployment, hit a verification blocker, and made a
+reasoned call to descope it rather than keep chasing provider signup friction" is itself a
+legitimate engineering decision worth showing, not something to delete.
+
+See `docs/CHANGE_LOG.md` for the formal change entry and `docs/STATUS.md` for current, live status.
 
 ---
 
@@ -139,6 +180,9 @@ Compact fallback if the cell must stay on one line:
 
 ## 3. Cloud posture — what "using the cloud" means here
 
+> **r4: historical.** This section describes the original Azure plan. Descoped — see the r4
+> amendment note above.
+
 Revision 1 used no cloud at all. Revision 2 added free VMs that we would install k3s on ourselves —
 which is **IaaS: renting Linux**. Self-managing the control plane, the database, the cache, the
 object store and the load balancer is precisely *not* using cloud services.
@@ -167,6 +211,8 @@ differences. That the identical manifests run on both substrates is itself a por
 ---
 
 ## 4. Target architecture (Azure)
+
+> **r4: historical.** Descoped — see the r4 amendment note above.
 
 ```
                 Internet
@@ -202,6 +248,10 @@ differences. That the identical manifests run on both substrates is itself a por
 
 ## 5. Why a real cloud, concretely
 
+> **r4: historical.** Descoped — see the r4 amendment note above. This section's reasoning for
+> *why* a real cloud would have added value still holds; it's recorded as what the project chose
+> not to pursue further, not as a flaw in the reasoning.
+
 Three experiments that **cannot exist** on k3d, plus one bonus data series:
 
 1. **Two-level elasticity.** Load rises → HPA adds pods → pods go `Pending` for lack of capacity →
@@ -220,6 +270,9 @@ And the economics section stops being arithmetic: `docs/COSTS.md` is built from 
 ---
 
 ## 6. Cost control
+
+> **r4: historical.** Descoped — see the r4 amendment note above. No cloud account was ever opened,
+> so none of this was ever at risk.
 
 Azure for Students: **$100/year, no credit card required.** With no payment instrument on file the
 account suspends rather than charging — overspend is structurally impossible, which is why this
@@ -381,7 +434,11 @@ still runs adapter-less locally. Re-run the identical test; capture the same thr
 
 **Exit:** dashboard shows live data from a manual two-browser session.
 
-### Phase 5 — Azure: Terraform the estate (2.5 days)
+### ~~Phase 5 — Azure: Terraform the estate~~ — DESCOPED (r4, 2026-10-20)
+
+Azure for Students verification never resolved (R-12). Rather than restart the same signup/
+verification friction with another provider, the project stops at local Kubernetes (k3d) —
+see the r4 amendment note near the top of this document. Original plan kept below as record.
 
 - Terraform (`azurerm`) modules: resource group · AKS (Free control-plane tier, 3 zones,
   system pool 1 × `Standard_B2s` + autoscaled user pool 1→2 `Standard_B2s`, sized to the §6.1 quota) · PostgreSQL Flexible Server ·
@@ -409,12 +466,23 @@ still runs adapter-less locally. Re-run the identical test; capture the same thr
 
 **Exit:** two graphs — the Redis tax (three series) and the scaling-efficiency curve.
 
-### Phase 7 — Load, autoscaling, and elasticity (2.5 days)
+### Phase 7 — Load, autoscaling, and elasticity (2.5 days) — mostly still in scope (r4, 2026-10-20)
+
+> **r4 note:** the load test and the HPA/autoscaler comparison below need only k3d and are **still
+> in scope** — this is the project's current next step. "Two-level elasticity" (the last bullet)
+> needs a real **Cluster Autoscaler** adding whole nodes, which k3d's fixed-size nodes can't do —
+> **descoped**, along with Phase 5 (see the r4 amendment note near the top of this document).
 
 - `loadtest/socketio-load.js`. **k6 has no Socket.IO client** — the script must speak the protocol
   over raw WebSocket (`40` connect, `42["event",payload]`) via k6's websockets module, or use an
   xk6 Socket.IO extension. Budget half a day; most underestimated task in this plan. Rehearse at
-  20 VUs locally before spending cloud VUH.
+  20 VUs locally before spending cloud VUH. **✅ Done (CHG-0032)** — verified at 20 VUs against the
+  real k3d cluster: 100% connect/join success, 328 messages sent and acked, p95 ack latency
+  17.64ms. The full 0→50→100→150 VU ramp below is sized for an off-host load generator (originally
+  Grafana Cloud k6 — also r4-moot, see R-3/R-6) against a real multi-node cluster; running it
+  against this laptop's 2-pod local deployment would measure the laptop, not the app, so it hasn't
+  been run at that scale. A smaller local-only ramp (e.g. 0→20→40) is a reasonable substitute for
+  the write-up if a bigger local number is wanted.
 - Ramp 0→50→100→150 VUs, each holding a connection and sending a message every ~5 s. (Not 500 — a
   6-vCPU cluster saturates long before that, and driving past saturation measures k6, not the app.)
 - CPU `requests`/`limits` set — HPA is meaningless without `requests`.
@@ -423,39 +491,46 @@ still runs adapter-less locally. Re-run the identical test; capture the same thr
   almost no CPU, so the CPU HPA may not fire until memory or file descriptors are exhausted. **If the
   CPU HPA scales late or not at all while the connection HPA scales correctly, that is the strongest
   single result this project can produce** — a real, non-obvious finding about a default that most
-  tutorials present as correct.
-- **Two-level elasticity.** Size pod CPU `requests` (≈400m) so a handful of pods fills a node, then
+  tutorials present as correct. **Fully doable on k3d** (pod-level HPA doesn't need real Cluster
+  Autoscaler) — this is the project's current next step.
+- ~~**Two-level elasticity.** Size pod CPU `requests` (≈400m) so a handful of pods fills a node, then
   push past the user pool's capacity so pods go `Pending` and the **Cluster Autoscaler** adds a node
-  (1 → 2 within quota — a short staircase, identical mechanism). Capture pod count and node count on one time axis. Record
-  node-provisioning latency — the minutes-long gap between "pods pending" and "pods running" is the
-  real cost of elasticity and is invisible in every laptop demo.
+  (1 → 2 within quota — a short staircase, identical mechanism). Capture pod count and node count on
+  one time axis. Record node-provisioning latency — the minutes-long gap between "pods pending" and
+  "pods running" is the real cost of elasticity and is invisible in every laptop demo.~~ **Descoped
+  (r4)** — needs a real Cluster Autoscaler adding whole nodes; k3d's node count is fixed.
 - Record ramp-down too; HPA scale-down is deliberately slow (5-minute stabilisation) and explaining
   that demonstrates understanding rather than installation.
 
 **Exit:** the two-staircase graph (pods and nodes), plus the CPU-vs-connection autoscaler comparison.
 
-### Phase 8 — Chaos and failure domains (1.5 days)
+### Phase 8 — Chaos and failure domains (1.5 days) — partially descoped (r4, 2026-10-20)
 
-With an active session and load running:
+With an active session and load running — items 1, 5, 6 need only k3d and are **still in scope**;
+items 2–4 need real separate machines/zones and are **descoped** along with Phase 5 (see the r4
+amendment note near the top). Item 1 is already done (`docs/evidence/04-kubernetes.md`).
 
-1. **Pod kill** — `kubectl delete pod`; client reconnects, lands elsewhere, session continues.
-2. **Node kill** — delete a VMSS instance; pods reschedule, Cluster Autoscaler replaces the node.
-3. **Zone failure** — take down a zone's nodes; verify topology-spread constraints keep the service
-   up. Cloud-only.
-4. **Managed database failover** — trigger a Postgres Flexible Server failover and measure app
-   recovery time. Cloud-only. (Provision the HA-capable tier for this window only; see §6.)
+1. **Pod kill** — `kubectl delete pod`; client reconnects, lands elsewhere, session continues. ✅ Done.
+2. ~~**Node kill** — delete a VMSS instance; pods reschedule, Cluster Autoscaler replaces the node.~~ Descoped — cloud-only.
+3. ~~**Zone failure** — take down a zone's nodes; verify topology-spread constraints keep the service up.~~ Descoped — cloud-only.
+4. ~~**Managed database failover** — trigger a Postgres Flexible Server failover and measure app recovery time.~~ Descoped — cloud-only.
 5. **Redis kill** — cross-pod broadcast stops, per-pod messaging and persistence continue, then
    recovers. State plainly that the Phase 3 fix introduced a new single point of failure and measure
    it. An honest failure-domain analysis is a better finding than claiming robustness. Note Redis
    clustering/replicas as the production answer.
-6. **Reconnect storm** — kill a pod holding the full VU load (~150 connections) and watch every client reconnect at once
+6. **Reconnect storm** — kill a pod holding the full VU load and watch every client reconnect at once
    onto the survivors; a CPU spike that may itself trigger further scaling. Best chaos material here.
    Measure with and without backoff jitter.
 - Add a `PodDisruptionBudget`; confirm the Phase 2 drain logic holds under real eviction.
 
-**Exit:** six recorded failure events, each with a dashboard trace.
+**Exit (revised):** three recorded failure events (pod kill, Redis kill, reconnect storm), each with
+a dashboard trace — down from six, since items 2–4 needed real cloud infrastructure.
 
-### Phase 9 — Cross-pod attachments (stretch, 1 day)
+### ~~Phase 9 — Cross-pod attachments (stretch, 1 day)~~ — DESCOPED (r4, 2026-10-20)
+
+Already a stretch goal, and its only implementation path (Azure Blob Storage) is cloud-specific —
+dropped along with Phase 5. Also moot: `CHG-0025` already removed attachment support from the app
+entirely, so B-3 no longer exists to close.
 
 Closes B-3 — a correctness fix, not decoration. Replace multer disk storage with **Azure Blob
 Storage** via `@azure/storage-blob`, serving by SAS URL. Note: Blob does not expose an S3-compatible
@@ -504,6 +579,11 @@ Minutes each if written at the time, and exactly what the experiment framing is 
 
 ## 9. Cost model (`docs/COSTS.md`)
 
+> **r4: historical/revised.** No Azure invoice will ever exist (descoped — see the r4 amendment
+> note above). The write-up (Phase 6 in the step table) can still estimate cost per connection
+> using local resource `requests`/`limits` and published DigitalOcean/Azure per-vCPU pricing as a
+> reference point — a credible estimate, clearly labelled as one, rather than a measured invoice.
+
 A section the assessment rewards and almost nobody writes — and with a real cloud it is **measured,
 not estimated**. Take the per-pod connection ceiling from Phase 6 and the actual Azure invoice, then
 extrapolate the monthly cost of 1k / 10k / 100k concurrent connections: nodes, managed Redis,
@@ -515,20 +595,24 @@ really making: architecture decisions are cost decisions.
 
 ## 10. Risks
 
+> **r4 note:** rows R-3, R-5, R-6, R-7, R-10 are now moot — there is no cloud account for them to
+> apply to. Left in the table, not deleted, since they were real planning work at the time; each
+> is marked closed below. R-12 is resolved (its own decision point triggered the r4 descope).
+
 | ID | Risk | Impact | Mitigation |
 |---|---|---|---|
 | R-1 | Postgres migration destabilises the app (Phase 2) | High — blocks everything downstream | Isolated branch; keep the `db.js` contract identical; verify under docker-compose first |
-| R-2 | k6 cannot speak Socket.IO out of the box | Medium — delays Phase 7 | Budget half a day; fall back to a Node-based harness if raw frames stall |
-| R-3 | Load generator co-located with the system under test | **High — silently invalidates every latency number** | Grafana Cloud k6 generates load off-host. Record cluster CPU regardless |
+| R-2 | k6 cannot speak Socket.IO out of the box | Medium — delays Phase 7 | **Materialised and resolved (CHG-0032)**: `loadtest/socketio-load.js` speaks the protocol directly over a raw WebSocket; took well under the budgeted half day |
+| R-3 | ~~Load generator co-located with the system under test~~ | **Moot (r4)** | Was: Grafana Cloud k6 generates load off-host. k6 now runs locally against k3d only — record this as a stated limitation of local results, not a defect |
 | R-4 | Sticky-session errors mistaken for the Redis bug | High — corrupts the conclusion | Diagnose B-5 explicitly in 3a; document as a separate finding |
-| R-5 | Azure credit exhausted by resources left running | **High — ends the cloud work** | `make cloud-down` every session; $10 budget alert; no card on file means suspension, not a bill |
-| R-6 | 500 VUH k6 allowance exhausted | Medium | Rehearse locally; spend VUH only on report-bound runs; track remaining |
-| R-7 | **Student-subscription vCPU quota (~4–6 cores, increases not permitted, some regions zero)** | **High — caps cluster size and therefore every load and elasticity result** | Quota is the first Phase 0 action, not a Phase 5 discovery (§6.1). Experiments sized to 6 vCPU; targets and node counts already reduced. Do **not** convert to pay-as-you-go to escape it — that requires a card and forfeits the overspend protection |
+| R-5 | ~~Azure credit exhausted by resources left running~~ | **Moot (r4)** | No cloud account was ever opened |
+| R-6 | ~~500 VUH k6 allowance exhausted~~ | **Moot (r4)** | No Grafana Cloud k6 account needed — k6 runs free, locally |
+| R-7 | ~~Student-subscription vCPU quota~~ | **Moot (r4)** | No cloud subscription exists |
 | R-8 | arm64 build host vs amd64 nodes | Low but confusing when hit | Production images built on GitHub's amd64 runners; `--platform linux/amd64` locally |
 | R-9 | Frontend (CRA on Node 24) does not build | Medium | Resolve in Phase 0; migrate to Vite if confirmed |
-| R-10 | Terraform work expands to fill available time | Medium | Terraform is a means, not a deliverable. Timebox Phase 5 to 2.5 days; hand-applied YAML is acceptable if it threatens the experiments |
-| R-11 | Scope creep back into auth/extras | High — ends with an incomplete experiment | Phases 0–8 are the project. Phase 9 is the only stretch |
-| R-12 | **Azure for Students verification fails or is slow** (automated university-ID check rejected 2026-09-20 for `nmims.in`; manual review takes days) | Medium — delays Phase 5 only | Routes, in order: **SheerID manual review** (the actual verification vendor); **Microsoft Q&A**, which is staffed and escalates these cases; and **NMIMS/MPSTME IT or faculty**, since the institution may already hold an Azure for Education tenant. The `azureforeducation.microsoft.com/institutions/contact` form is for institution administrators and resolves to Engage Center with no access for a student account — not a student route. **Phases 0–4 are entirely local (~8 days) and need no cloud account**, so the critical path is unaffected. **Decision point: if verification is unresolved when Phase 4 closes, switch to GCP** (GKE's recurring free-tier credit covers the control plane indefinitely), accepting that a card-backed account forfeits the overspend protection from CHG-0006 (P-22). Second team member (B118) attempts verification in parallel |
+| R-10 | ~~Terraform work expands to fill available time~~ | **Moot (r4)** | No Terraform work — Phase 5 descoped entirely |
+| R-11 | Scope creep back into auth/extras | High — ends with an incomplete experiment | Phases 0–4 (local) are the project. Phase 5 and Phase 9 are dropped (r4); Phase 8 is partial (r4) |
+| R-12 | **Azure for Students verification fails or is slow** | Medium — delays Phase 5 only | **Resolved by the r4 decision (2026-10-20).** SheerID manual review did not resolve (lost the original ticket, resubmission ran into further friction); per this row's own decision point ("if verification is unresolved when Phase 4 closes, switch to GCP"), and Phase 4 being done, the owner chose to stop at local Kubernetes rather than restart the process with a second provider — see the r4 amendment note near the top of this document |
 
 ---
 
@@ -576,12 +660,9 @@ create in the same sitting: **Azure for Students** (redeem with .edu or student 
 
 ## 14. Immediate next actions
 
-1. Redeem **Azure for Students** via the GitHub Student Developer Pack, create the subscription, set
-   the **$10 budget alert** the same hour, then **check the vCPU quota across regions** (§6.1) — that
-   number, not the credit, determines how large every experiment can be.
-2. Create the **Grafana Cloud** free account (dashboards + 500 k6 VUH).
-3. Reproduce the CRA dev-server issue on Node 24 in a normal shell → decide CRA vs Vite.
-4. `brew install k3d helm k6 terraform azure-cli`.
-5. Write the dated hypothesis into `docs/EXPERIMENT.md` **before** touching any Kubernetes.
-6. Begin Phase 1 (`socket.io-client` wiring **including the `sentAt` stamp**) — without it there is
-   no demo and no latency metric.
+> **r4: superseded.** This list was written on 2026-09-20, before Phase 0 started — items 3, 5 and
+> 6 are long done, and items 1, 2 and 4's Azure/Terraform/Grafana-Cloud pieces are moot (r4
+> descope). **For what's actually next, see `docs/STATUS.md`** — it's the maintained, living
+> version of this section and is updated every session; this list is kept only as a historical
+> record of where the project started. As of r4, next up is Phase 7's HPA step (`metrics-server` +
+> autoscaling, CPU vs `chatscale_socket_connections`) — fully local, no cloud account needed.

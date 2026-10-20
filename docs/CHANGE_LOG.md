@@ -50,6 +50,7 @@
 | CHG-0030 | 2026-10-06 | Parth | Backend / Instrumentation | Added `prom-client` + `GET /metrics`: connection gauge, messages counter, broadcast-latency histogram, default process metrics (Phase 4, step 1 of 4) | Feature | Low | Verified |
 | CHG-0031 | 2026-10-06 | Parth | Infrastructure (Kubernetes) | Prometheus + Grafana deployed into k3d, scraping the backend's `/metrics` via DNS service discovery; one provisioned dashboard (Phase 4, step 2 of 4) | Feature | Low | Verified |
 | CHG-0032 | 2026-10-20 | Parth | Load testing | `loadtest/socketio-load.js`: k6 script speaking raw Engine.IO/Socket.IO over WebSocket (k6 has no Socket.IO client); ramps real throwaway users into a shared space and holds a chat connection each (Phase 4, step 3 of 4) | Feature | Low | Verified |
+| CHG-0033 | 2026-10-20 | Parth | Documentation / Planning | PLAN.md r4: Phase 5 (real cloud) descoped — Azure verification (R-12) never resolved; project scope finalized at local Kubernetes (k3d) | Process | Low | Implemented |
 ---
 
 ## 2. Detailed Entries
@@ -2144,6 +2145,92 @@ is real — every VU receiving every other VU's messages in the shared channel, 
 **Rollback Plan**
 Delete `loadtest/socketio-load.js`. Nothing else depends on it; it only ever adds throwaway users
 and a throwaway space to whichever database `BASE` points at, same as the existing test suites.
+
+---
+
+### CHG-0033 — PLAN.md r4: Phase 5 (Real Cloud) Descoped
+
+| Field | Value |
+|---|---|
+| **Change ID** | CHG-0033 |
+| **Date Raised** | 2026-10-20 |
+| **Date Implemented** | 2026-10-20 |
+| **Author** | Parth |
+| **Module / Component** | Documentation / Planning |
+| **Change Type** | Process |
+| **Risk Level** | Low (documentation); resolves a Medium delivery risk (R-12) |
+| **Status** | Implemented |
+| **Amends** | CHG-0006, CHG-0007, CHG-0009 |
+
+**Description**
+`PLAN.md` revised to r4: **Phase 5 (Azure/AKS, the real-cloud deployment) and everything that
+depended on it are descoped, not deferred.** Project scope now ends at local Kubernetes (k3d).
+
+**Why.** Azure for Students automated verification was rejected on 2026-09-20 for the `nmims.in`
+institutional email (CHG-0009, risk R-12). Manual SheerID review was pursued over the following
+weeks: SheerID (Liz, verification-help@sheerid.com) reported on 2026-10-07 that the original
+ticket could not be found and asked for a resubmission via Microsoft's student-pricing flow, which
+in turn surfaced further friction (no Microsoft account existed under the institutional email; the
+public student-pricing page is for discounted Microsoft 365, a different product from the Azure
+free-credit offer, and easy to land on by mistake instead of `azure.microsoft.com/en-us/free/students/`).
+A formal reply to Liz was drafted but it's unknown whether it was sent or answered. R-12's own
+mitigation already named the decision point: *"if verification is unresolved when Phase 4 closes,
+switch to GCP"* (also considered: DigitalOcean, which has a $200 GitHub Student Pack credit
+requiring no identity verification at all). With Phase 4 now complete, that decision point was
+reached — but rather than restart the same signup/verification cycle with a second provider, the
+owner chose to stop at local Kubernetes instead.
+
+**What changed in `PLAN.md`:**
+- Header metadata (Revision, Status, Cloud, Budget) updated to reflect no cloud account.
+- New **"r4 Amendment"** section added directly under the header — the first thing anyone reading
+  the plan now sees — explaining the decision and its scope impact.
+- §§3–6 (Cloud posture, Target architecture, Why a real cloud, Cost control) and §9 (Cost model)
+  annotated as historical record, left otherwise intact — the original reasoning for wanting a real
+  cloud is still sound engineering and worth keeping visible, just no longer being acted on.
+- **Phase 5** (Azure/Terraform) marked descoped in full.
+- **Phase 7** (load/autoscaling) — clarified as **mostly still in scope**: the k6 load test and the
+  HPA CPU-vs-connection-count comparison need only k3d and remain the project's next step; only
+  "two-level elasticity" (real Cluster Autoscaler adding whole nodes) is descoped.
+- **Phase 8** (chaos) — items 1 (pod kill, already done), 5 (Redis kill) and 6 (reconnect storm)
+  stay in scope; items 2–4 (node kill, zone failure, managed-DB failover) need real separate
+  machines and are descoped. Exit criterion revised from six recorded failure events to three.
+- **Phase 9** (cross-pod attachments via Azure Blob) marked descoped — was always a stretch goal,
+  and additionally moot since CHG-0025 already removed attachment support from the app entirely.
+- §10 Risks — R-3, R-5, R-6, R-7, R-10 marked moot (no cloud account exists for them to apply to);
+  R-2 marked resolved (materialized as CHG-0032, under budget); R-12 marked resolved by this
+  decision; R-11's "Phases 0–8 are the project" line updated to reflect the new scope.
+- §14 Immediate next actions (written 2026-09-20, before Phase 0 started) marked superseded by
+  `docs/STATUS.md`, which is the maintained, live version of "what's next."
+
+**Why now:** raised directly by the owner, who asked whether a non-cloud alternative (Heroku) could
+replace Azure for Phase 5. Heroku has no Kubernetes offering at all, so it can't fulfill what Phase
+5 actually needed (a real Cluster Autoscaler, multi-zone failure testing, Terraform-managed
+infrastructure) — explained in chat, along with DigitalOcean as the closer like-for-like
+replacement PLAN.md's own R-12 already named. After weighing the cost/effort of a second cloud
+provider's signup process against what Phase 5 would have actually added on top of the local
+Kubernetes work already done, the owner chose to finalize scope at local k3d rather than continue.
+
+**Files Modified**
+- `PLAN.md`, `docs/STATUS.md`, `docs/CHANGE_LOG.md`
+
+**Verification**
+Read back `PLAN.md` end to end after editing to confirm every cloud-dependent section either points
+to the r4 amendment note or is clearly marked historical/descoped, and that nothing still reads as
+a live, pending task. Cross-checked against `docs/CHANGE_LOG.md`'s existing register for R-12's
+history (CHG-0009) before writing the "why" section, rather than relying on chat memory alone.
+
+**Known Limitations**
+1. This is a planning/scope decision, not a code change — there is nothing to test, only to read
+   back for internal consistency (done above).
+2. The formal reply drafted for SheerID support was never confirmed sent; if the owner later
+   decides to pursue it anyway (e.g. out of curiosity, or because MPSTME IT turns out to already
+   have an Azure for Education tenant), that remains possible — this change records a decision to
+   stop *investing project time* in it, not a technical blocker that prevents revisiting it.
+
+**Rollback Plan**
+Revert `PLAN.md` to its r3 state (pre-amendment) and remove the corresponding notes from
+`docs/STATUS.md`. No code or infrastructure changed, so there is nothing else to undo — this
+entry exists purely to record a scope decision for the project's own history.
 
 ---
 

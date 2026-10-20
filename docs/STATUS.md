@@ -1,11 +1,12 @@
 # ChatScale / Cloud Scaling Study — Status
 
 **Read this first in a new session.** It's the "what's going on" doc — for the full plan see
-[PLAN.md](../PLAN.md), for the formal record of every change see
-[docs/CHANGE_LOG.md](CHANGE_LOG.md) (CHG-0001 to CHG-0032 so far), for the demo script see
-[docs/DEMO.md](DEMO.md).
+[PLAN.md](../PLAN.md) (**read its r4 amendment note near the top first** — project scope changed),
+for the formal record of every change see [docs/CHANGE_LOG.md](CHANGE_LOG.md) (CHG-0001 to
+CHG-0033 so far), for the demo script see [docs/DEMO.md](DEMO.md).
 
-**Last updated:** 2026-10-20, after the k6 load-testing script (Phase 4, step 3 of 4).
+**Last updated:** 2026-10-20, after descoping Phase 5 (real cloud) — project now ends at local
+Kubernetes (k3d). See `PLAN.md`'s r4 amendment note and CHG-0033.
 
 ---
 
@@ -20,9 +21,11 @@ chaos test that kills a pod and measures recovery. The backend now exposes Prome
 `/metrics` (connections, messages, broadcast latency), Prometheus + Grafana run as two more pods
 in the same k3d cluster scraping and graphing it live, and a k6 script (`loadtest/socketio-load.js`)
 can fake many simultaneous chat users — verified at 20 VUs against the real cluster, 328 messages
-sent and acked with zero failures. Next up: a Horizontal Pod Autoscaler (CPU vs connection count),
-then a real cloud (Phase 5) — separately, Azure for Students verification is still an open side
-thread (R-12), see below.
+sent and acked with zero failures. **The project's scope is now finalized at local Kubernetes**:
+Azure for Students verification never resolved (R-12), and rather than restart that process with a
+second cloud provider, the decision was to stop here — everything through local k3d is a complete,
+self-contained result on its own. Next up: a Horizontal Pod Autoscaler (CPU vs connection count),
+the last piece of local scope, then the write-up.
 
 ---
 
@@ -32,13 +35,12 @@ thread (R-12), see below.
 cd ~/dev/wp_project && git status --short
 ```
 
-**As of this writing, the Kubernetes work (step 3) is pushed** — `origin/main` already has it.
-**The metrics endpoint, the Prometheus/Grafana deployment, and the k6 load-test script (step 4,
-parts 1–3 — CHG-0030, CHG-0031, CHG-0032) are built, tested, and documented but NOT yet pushed.**
-The user has a standing rule: **Claude never runs `git add`/`commit`/`push` — always give the
-commands and let the user run them.** If `git status` shows the CHG-0030/0031/0032 files
-uncommitted, that work is done but just sitting there; don't redo it, just offer the git commands
-again.
+**As of this writing, everything through CHG-0032 (Kubernetes, metrics, Prometheus/Grafana, the k6
+load test) is pushed** — `origin/main` has it all. **The r4 scope-change edit to `PLAN.md`
+(descoping Phase 5, CHG-0033) is the only thing not yet committed as of this note** — check
+`git status`; if it shows only `PLAN.md` (and this file) modified, that's it, nothing else is
+pending. The user has a standing rule: **Claude never runs `git add`/`commit`/`push` — always give
+the commands and let the user run them.**
 
 Also check whether a k3d cluster is running (`k3d cluster list`) and Docker Desktop is up
 (`docker info`) before assuming anything about live infra — both get torn down/forgotten between
@@ -54,16 +56,16 @@ CHG-0030/31), they're still running the pre-metrics image — `kubectl -n chatsc
 deployment/backend` after any `./scripts/k8s-up.sh` re-run, since it won't repull/restart on its
 own when only the image content (not the manifest) changed.
 
-**Also open: Azure for Students verification (R-12, PLAN.md).** SheerID support (Liz) said on
-2026-10-07 they have no record of the original request and asked for a resubmit via Microsoft's
-student-pricing flow. That flow turned out confusing in practice (no Microsoft account exists
-under the `.nmims.in` address; the generic "Student Discount" page is for discounted Office 365,
-a different product from the Azure free-credit offer this project needs — the correct URL is
-`azure.microsoft.com/en-us/free/students/`). A formal reply to Liz was drafted (asking whether
-`nmims.in` is a recognized institution domain, and whether manual document verification is
-possible) but **whether it was sent, and any reply, is unknown — follow up with the owner.** This
-blocks nothing in Phase 4 (all local); only matters once Phase 5 (real cloud) starts, and
-`PLAN.md`'s own decision point already says fall back to DigitalOcean or GCP if this stays stuck.
+**Resolved (2026-10-20): Azure for Students verification (R-12, PLAN.md) is closed by descoping
+Phase 5, not by getting verification working.** SheerID support (Liz) said on 2026-10-07 they had
+no record of the original request and asked for a resubmit via Microsoft's student-pricing flow;
+that flow turned out confusing in practice (no Microsoft account existed under the `.nmims.in`
+address; the generic "Student Discount" page is for discounted Office 365, a different product
+from the Azure free-credit offer — the correct URL was `azure.microsoft.com/en-us/free/students/`).
+A formal reply to Liz was drafted but it's unknown whether it was sent or answered — **moot now**:
+rather than keep chasing verification (or restart the whole signup process with DigitalOcean/GCP),
+the owner chose to stop the project's scope at local Kubernetes. See `PLAN.md`'s r4 amendment note
+for the full reasoning and CHG-0033 for the formal record.
 
 ---
 
@@ -77,12 +79,12 @@ blocks nothing in Phase 4 (all local); only matters once Phase 5 (real cloud) st
 | 1 | **The fix:** Redis (Valkey) adapter, on/off via `REDIS_URL` | ✅ Done, pushed — [evidence/02](evidence/02-redis-fix.md) |
 | 2 | **Containers:** Docker images, nginx load balancer, health checks, graceful shutdown, `docker compose up` | ✅ Done, pushed — [evidence/03](evidence/03-graceful-failover.md) |
 | 3 | **Kubernetes (k3d):** same experiment on real pods + pod-kill chaos test | ✅ Done, pushed — [evidence/04](evidence/04-kubernetes.md) |
-| 4a | **Metrics endpoint** (`prom-client`, `GET /metrics`: connections, messages, broadcast latency) | ✅ Built & tested — **⚠️ NOT pushed**, see above — CHG-0030 |
-| 4b | **Prometheus + Grafana** in k3d, scraping `/metrics`, one dashboard | ✅ Built & tested — **⚠️ NOT pushed**, see above — CHG-0031 |
-| 4c | **Load test** (`loadtest/socketio-load.js`, k6 over raw WebSocket) | ✅ Built & tested — **⚠️ NOT pushed**, see above — CHG-0032 |
-| 4d | **Autoscaling** (HPA: CPU vs connection count) | ⏭️ **Not started — next up** |
-| 5 | **Cloud** (real machines, Cluster Autoscaler, zone failures, public link) | Not started — needs a cloud account (see below) |
-| 6 | Write-up: graphs, recordings, findings, cost model | Not started |
+| 4a | **Metrics endpoint** (`prom-client`, `GET /metrics`: connections, messages, broadcast latency) | ✅ Done, pushed — CHG-0030 |
+| 4b | **Prometheus + Grafana** in k3d, scraping `/metrics`, one dashboard | ✅ Done, pushed — CHG-0031 |
+| 4c | **Load test** (`loadtest/socketio-load.js`, k6 over raw WebSocket) | ✅ Done, pushed — CHG-0032 |
+| 4d | **Autoscaling** (HPA: CPU vs connection count) — fully local, no cloud needed | ⏭️ **Not started — next up** |
+| 5 | ~~Cloud~~ (real machines, Cluster Autoscaler, zone failures, public link) | **DESCOPED (r4)** — Azure verification never resolved; project scope finalized at local k3d — see `PLAN.md`'s r4 amendment, CHG-0033 |
+| 6 | Write-up: graphs, recordings, findings, cost model (local-only scope) | Not started — next after step 4d |
 
 ---
 
@@ -167,7 +169,7 @@ throwaway local databases, never Supabase).
 | `backend/tests/*.test.js` + `run-all.js` | The automated checks (`npm run test:api`) — see chat history for what each one checks, or just read them, they're short |
 | `backend/tests/failover.compose.js` / `failover.k8s.js` | The chaos tests — kill a copy/pod, measure recovery |
 | `compose.yaml` | Docker Compose: nginx + 2 backend copies + Postgres + Redis |
-| `k8s/base/` + `k8s/overlays/local/` | Kubernetes manifests (Kustomize). `base/` is meant to be substrate-agnostic — a future cloud overlay adds to it, doesn't replace it |
+| `k8s/base/` + `k8s/overlays/local/` | Kubernetes manifests (Kustomize). `base/` was kept substrate-agnostic for a future cloud overlay that, per the r4 amendment, won't now be added — `local/` is the only overlay this project will have |
 | `backend/src/metrics.js` | The Prometheus metrics the backend exposes at `/metrics` (CHG-0030) |
 | `k8s/base/prometheus.yaml` + `grafana.yaml` | Prometheus + Grafana, provisioned, in-cluster (CHG-0031) |
 | `scripts/k8s-up.sh` | Reading this script's comments explains most of the Kubernetes gotchas hit along the way |
@@ -204,10 +206,9 @@ react to real load. This needs:
    then compare against scaling on connection count (KEDA or prometheus-adapter, reading our
    existing `chatscale_socket_connections`). Now that the load test exists, this is next.
 
-All of this still runs locally on k3d — no cloud account needed yet. Phase 5 (real cloud) is what
-needs DigitalOcean (user has a GitHub Student Pack with $200 credit — easiest path, no Azure
-verification needed) or Oracle Cloud's free tier, since Azure for Students verification was
-rejected early on (CHG-0009) and hasn't been revisited.
+All of this runs locally on k3d — no cloud account needed, and **none ever will be for this
+project**: Phase 5 (real cloud) is descoped as of 2026-10-20 (r4 amendment in `PLAN.md`, CHG-0033).
+Step 4d (HPA) is the last piece of remaining scope; after that, the write-up (step 6).
 
 ---
 
@@ -221,6 +222,6 @@ rejected early on (CHG-0009) and hasn't been revisited.
   DM) from before those features were removed from the schema (CHG-0025) — harmless, unused.
 - Supabase's SSL certificate was never downloaded (`DATABASE_CA_CERT` unset) — the connection is
   encrypted but not certificate-verified. Low priority.
-- Grafana (CHG-0031) has anonymous viewer access and a fixed admin password — fine only because
-  it's reached exclusively via `kubectl port-forward` on the owner's own machine, never exposed
-  further. Would need real auth before any cloud overlay (Phase 5) put it behind a public address.
+- Grafana (CHG-0031) has anonymous viewer access and a fixed admin password — fine because it's
+  reached exclusively via `kubectl port-forward` on the owner's own machine, and per the r4
+  amendment this project will never put it behind a public address, so this isn't a gap to close.
