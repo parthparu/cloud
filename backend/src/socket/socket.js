@@ -4,6 +4,7 @@ const { verifyAccessToken } = require('../utils/tokens');
 const userService = require('../services/userService');
 const serverService = require('../services/serverService');
 const messageHandlers = require('./messageHandlers');
+const metrics = require('../metrics');
 
 let io;
 
@@ -43,6 +44,7 @@ exports.initializeSocket = (server) => {
   
   io.on('connection', (socket) => {
     console.log(`[${INSTANCE_NAME}] User connected: ${socket.user.username} (${socket.user.id})`);
+    metrics.connections.inc();
 
     userService.updateUser(socket.user.id, { OnlineStatus: 'Online' })
       .then(() => {
@@ -75,6 +77,7 @@ exports.initializeSocket = (server) => {
     messageHandlers(io, socket);
 
     socket.on('disconnect', () => {
+      metrics.connections.dec();
       console.log(`[${INSTANCE_NAME}] User disconnected: ${socket.user.username} (${socket.user.id})`);
 
       userService.updateUser(socket.user.id, { OnlineStatus: 'Offline' })

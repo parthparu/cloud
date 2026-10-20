@@ -4,15 +4,17 @@ const serverService = require('../services/serverService');
 const userService = require('../services/userService');
 const INSTANCE_NAME = require('../config/instance');
 const realtimeAdapter = require('./adapter');
+const metrics = require('../metrics');
 
 const MAX_MESSAGE_LENGTH = 4000;
 
 // Evidence for the scaling experiment (PLAN.md Phase 3): who a broadcast reached. Without the
 // Redis adapter only this copy's sockets are reachable; with it, fetchSockets() asks every copy.
-// Runs after the emit and never delays delivery. LOG_DELIVERY=false turns it off for load tests.
-const logDelivery = async (io, messageId, username, channelId) => {
-  if (process.env.LOG_DELIVERY === 'false') return;
-
+// Also times the same work for chatscale_broadcast_latency_seconds (PLAN.md Phase 4). Runs after
+// the emit and never delays the ack back to the sender. LOG_DELIVERY=false silences the console
+// line for load tests, but the metric is still recorded — load tests are exactly when it matters.
+const recordBroadcast = async (io, messageId, username, channelId) => {
+  const stopTimer = metrics.broadcastLatency.startTimer();
   const room = `channel:${channelId}`;
   const local = io.sockets.adapter.rooms.get(room)?.size || 0;
   let line = `[${INSTANCE_NAME}] message ${messageId} from ${username} -> ${room}, delivered to ${local} socket(s) on this copy`;
@@ -25,7 +27,9 @@ const logDelivery = async (io, messageId, username, channelId) => {
       line += ' (other copies did not answer)';
     }
   }
-  console.log(line);
+
+  stopTimer();
+  if (process.env.LOG_DELIVERY !== 'false') console.log(line);
 };
 
 // Reply through the client's acknowledgement callback when it supplied one,
@@ -117,8 +121,9 @@ module.exports = (io, socket) => {
       };
 
       io.to(`channel:${channelId}`).emit('message:new', messageData);
+      metrics.messagesTotal.inc();
 
-      logDelivery(io, message.MessageID, user.Username, channelId);
+      recordBroadcast(io, message.MessageID, user.Username, channelId);
       reply(socket, ack, { ok: true, message: messageData });
     } catch (error) {
       console.error('Error sending message:', error);

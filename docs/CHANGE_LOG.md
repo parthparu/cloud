@@ -47,6 +47,9 @@
 | CHG-0027 | 2026-10-01 | Parth | Demo tooling | Demo script checks backend readiness (no false "Ready"), --local-db for networks blocking database ports, clean-up on closed terminal | Defect fix + Tooling | Low | Verified |
 | CHG-0028 | 2026-10-03 | Parth | Infrastructure (Kubernetes) | Experiment and chaos test re-run on a real k3d Kubernetes cluster; 3 deployment-ordering defects found and fixed (namespace inheritance, secretGenerator, crash-loop before DB ready) | Feature + Defect fixes | Medium | Verified |
 | CHG-0029 | 2026-10-06 | Parth | Documentation | Added docs/STATUS.md — a session-handoff summary of project state, rules and next steps, for Claude sessions to read first | Documentation | Low | Verified |
+| CHG-0030 | 2026-10-06 | Parth | Backend / Instrumentation | Added `prom-client` + `GET /metrics`: connection gauge, messages counter, broadcast-latency histogram, default process metrics (Phase 4, step 1 of 4) | Feature | Low | Verified |
+| CHG-0031 | 2026-10-06 | Parth | Infrastructure (Kubernetes) | Prometheus + Grafana deployed into k3d, scraping the backend's `/metrics` via DNS service discovery; one provisioned dashboard (Phase 4, step 2 of 4) | Feature | Low | Verified |
+| CHG-0032 | 2026-10-20 | Parth | Load testing | `loadtest/socketio-load.js`: k6 script speaking raw Engine.IO/Socket.IO over WebSocket (k6 has no Socket.IO client); ramps real throwaway users into a shared space and holds a chat connection each (Phase 4, step 3 of 4) | Feature | Low | Verified |
 ---
 
 ## 2. Detailed Entries
@@ -1885,6 +1888,262 @@ Read back for accuracy against current `git status`, `k3d cluster list`, and the
 
 **Rollback Plan**
 Delete the file; nothing else depends on it.
+
+---
+
+### CHG-0030 — Metrics Endpoint (`GET /metrics`)
+
+| Field | Value |
+|---|---|
+| **Change ID** | CHG-0030 |
+| **Date Raised** | 2026-10-06 |
+| **Date Implemented** | 2026-10-06 |
+| **Author** | Parth |
+| **Module / Component** | Backend / Instrumentation |
+| **Change Type** | Feature |
+| **Risk Level** | Low |
+| **Status** | Verified |
+
+**Description**
+First step of Phase 4 (PLAN.md §"Phase 4 — Instrumentation"): added `prom-client` and a new
+`backend/src/metrics.js` registry, exposed at `GET /metrics` (placed alongside `/healthz`/`/readyz`,
+ahead of `morgan`, so scrapes don't spam the access log). Four series, each labelled `instance`
+(reusing `INSTANCE_NAME`, same as every other per-copy log line in this project):
+
+- `chatscale_socket_connections` (gauge) — incremented/decremented in `socket.js` on
+  Socket.IO `connection`/`disconnect`.
+- `chatscale_messages_total` (counter) — incremented in `messageHandlers.js` on a successful
+  `message:send`.
+- `chatscale_broadcast_latency_seconds` (histogram) — times the same work the existing
+  `logDelivery` console line already did (the room `emit`, plus the cross-copy `fetchSockets()`
+  check when the Redis adapter is active). That function was renamed `recordBroadcast` and now
+  always records the metric, even when `LOG_DELIVERY=false` silences its console line for load
+  tests — load tests are exactly when this number matters most.
+- `chatscale_delivery_latency_seconds` (histogram, labelled `same_pod`/`cross_pod`) — defined per
+  PLAN.md's spec but **not fed yet**: true client-send-to-client-receive latency needs the
+  *receiving* client to report back, which means frontend changes. That's Phase 6 work (the load
+  test), not this step.
+- Default Node process metrics (`prom-client`'s `collectDefaultMetrics`) — CPU, memory, event
+  loop lag, GC, all free with the registry.
+
+**Why now:** next item on `docs/STATUS.md`'s step 4 list, raised directly by the owner.
+
+**Files Added**
+- `backend/src/metrics.js`
+
+**Files Modified**
+- `backend/server.js` (mounts `/metrics`), `backend/src/socket/socket.js` (connection gauge),
+  `backend/src/socket/messageHandlers.js` (`logDelivery` → `recordBroadcast`: messages counter +
+  broadcast histogram), `backend/package.json`/`package-lock.json` (`prom-client` dependency),
+  `docs/STATUS.md`, `docs/CHANGE_LOG.md`
+
+**Verification**
+Started a throwaway backend (`DATABASE_URL=` + scratch `SQLITE_PATH`, never Supabase — rule 3)
+on a spare port. `curl /metrics` showed all four series registered. Connected a real
+`socket.io-client` with a signed JWT for the seeded `parth` user, confirmed `chatscale_socket_connections`
+went 0→1→0 across connect/disconnect, joined a channel, sent a message, and confirmed
+`chatscale_messages_total` incremented by 1 and `chatscale_broadcast_latency_seconds_count` recorded
+one observation. Did not run the full `npm run test:api` against the already-running k3d cluster
+(its pods run an older image without this code, and it wasn't worth disturbing); nothing touched by
+this change intersects with the existing test suites' coverage.
+
+**Known Limitations**
+1. `chatscale_delivery_latency_seconds` has no data yet — needs a frontend round trip, deferred to
+   Phase 6's load test.
+2. Not yet wired into Kubernetes: no `ServiceMonitor`/scrape annotation, and Prometheus/Grafana
+   themselves aren't deployed — next items on the Phase 4 list (PLAN.md).
+3. `npm audit` reports pre-existing vulnerabilities across the dependency tree, unrelated to
+   `prom-client`; not addressed here (out of scope, no `audit fix --force` run).
+
+**Rollback Plan**
+Remove `backend/src/metrics.js`, the `/metrics` route in `server.js`, the two call sites in
+`socket.js` and `messageHandlers.js` (revert `recordBroadcast` back to `logDelivery`), and the
+`prom-client` dependency. Nothing else depends on this endpoint yet.
+
+---
+
+### CHG-0031 — Prometheus + Grafana on k3d
+
+| Field | Value |
+|---|---|
+| **Change ID** | CHG-0031 |
+| **Date Raised** | 2026-10-06 |
+| **Date Implemented** | 2026-10-06 |
+| **Author** | Parth |
+| **Module / Component** | Infrastructure (Kubernetes) |
+| **Change Type** | Feature |
+| **Risk Level** | Low |
+| **Status** | Verified |
+
+**Description**
+Second step of Phase 4: Prometheus and Grafana now run as two more Deployments in the same k3d
+cluster, following the existing hand-rolled `k8s/base/*.yaml` shape (same pattern as `redis.yaml`/
+`postgres.yaml`) rather than the `kube-prometheus-stack` Helm chart PLAN.md originally named — that
+chart brings an operator, CRDs, node-exporter and kube-state-metrics, which is a lot of new moving
+parts (and resource requests) for a 3-node laptop cluster that just needs one app's own `/metrics`
+scraped. Can revisit Helm later if cluster-wide metrics (node CPU/memory, for the HPA-vs-CPU side
+of the Phase 4 experiment) are needed — noted as a limitation below, not solved here.
+
+- **Discovery, no RBAC needed:** added a headless Service, `backend-headless`
+  (`k8s/base/backend-service.yaml`) — `clusterIP: None` means its DNS name resolves to one A
+  record per *ready* backend pod instead of load-balancing to one. Prometheus's `dns_sd_configs`
+  (`k8s/base/prometheus.yaml`) resolves that name every 15s and scrapes every pod it finds — the
+  usual `kubernetes_sd_configs` approach would need a ServiceAccount + RBAC to watch the
+  Kubernetes API, which this avoids entirely.
+- **Prometheus** (`k8s/base/prometheus.yaml`): one ConfigMap (`prometheus.yml`) + Deployment +
+  Service, port 9090. 6h retention, no PersistentVolume (see Known Limitations).
+- **Grafana** (`k8s/base/grafana.yaml`): one Deployment + Service, port 3000, fully provisioned —
+  a datasource ConfigMap pointing at `http://prometheus:9090` and a dashboard ConfigMap, both read
+  on startup, so there is nothing to click through by hand. Anonymous viewer access is enabled
+  (`GF_AUTH_ANONYMOUS_ENABLED`) since this is reached only via port-forward, never the Ingress —
+  no login wall needed for a local, throwaway dashboard.
+- **Dashboard** ("ChatScale — Backend Overview", `uid: chatscale-overview`): 4 panels —
+  connections by pod, messages/sec, broadcast latency p50/p95, backend pods up. Covers what
+  `backend/src/metrics.js` (CHG-0030) actually feeds today; no panel yet for
+  `chatscale_delivery_latency_seconds` (needs a frontend round trip — Phase 6) or for cluster
+  CPU/memory (needs node-exporter/kube-state-metrics or metrics-server — not deployed here).
+- **`scripts/k8s-dashboards.sh`** (new): foreground `kubectl port-forward` for both — Grafana at
+  `localhost:3001`, Prometheus at `localhost:9090` — since neither sits behind the Ingress.
+- `scripts/k8s-up.sh` now also waits on the Prometheus/Grafana rollouts (longer timeout, and a
+  slow-pull explicitly does not fail the script — the app itself doesn't depend on either) and
+  mentions the new dashboard script in its final output.
+
+**Why now:** next item on `docs/STATUS.md`'s step 4 list, raised directly by the owner, right
+after CHG-0030 gave Prometheus something to scrape.
+
+**Files Added**
+- `k8s/base/prometheus.yaml`, `k8s/base/grafana.yaml`, `scripts/k8s-dashboards.sh`
+
+**Files Modified**
+- `k8s/base/backend-service.yaml` (added the `backend-headless` Service), `k8s/base/kustomization.yaml`
+  (registered the two new manifests), `scripts/k8s-up.sh`, `README.md`, `docs/STATUS.md`,
+  `docs/CHANGE_LOG.md`
+
+**Verification**
+`kubectl kustomize k8s/overlays/local` built cleanly; the embedded dashboard JSON was extracted
+from the rendered output and parsed to confirm it's valid. Applied to the actual running k3d
+cluster (`./scripts/k8s-up.sh`, then `kubectl rollout restart deployment/backend` — the Deployment
+spec was otherwise unchanged, so it would not have picked up the rebuilt image on its own).
+Hit the same slow/partial registry pull this project has seen before (CHG-0028) on the Prometheus
+image; resolved with the documented workaround, `docker exec <node> crictl pull <image>`.
+Confirmed via Prometheus's own `/api/v1/targets` that both backend pods were discovered and
+scraped (`health: up`) — proving the headless-Service DNS trick actually works, not just that the
+config parses. Connected a real `socket.io-client` through a `kubectl port-forward` straight to
+the backend Service, sent 10 messages, and watched `chatscale_messages_total` and
+`chatscale_broadcast_latency_seconds_count` both read back `10` from Prometheus. Queried Grafana's
+own datasource-proxy endpoint (not just Prometheus directly) for `sum(rate(chatscale_messages_total[1m]))`
+and got a non-zero rate back, confirming Grafana can actually reach and query Prometheus, not just
+that both pods are `Running`.
+
+**Known Limitations**
+1. **No cluster CPU/memory metrics** — the per-pod CPU numbers the Phase 4 CPU-vs-connection-count
+   HPA experiment needs aren't flowing yet. That needs either `metrics-server` (what Kubernetes'
+   own HPA reads natively) or node-exporter/kube-state-metrics (for Prometheus/Grafana to show
+   them too). Neither is deployed by this change — next piece of Phase 4, not this one.
+2. **No Prometheus persistence** — a restarted Prometheus pod loses its history. Acceptable for a
+   local, short-retention (6h) experiment cluster; would need a PersistentVolumeClaim (like
+   `postgres.yaml` already has) if that ever matters.
+3. **Discovered a real Prometheus gotcha while verifying:** Prometheus overwrites a scraped
+   sample's `instance` label with its own scrape-target address and renames the app's own
+   `instance` label (CHG-0030) to `exported_instance`. The dashboard's "Connections by pod" panel
+   had to use `{{exported_instance}}`, not `{{instance}}`, to show the pod name instead of an IP.
+   Documented inline in `k8s/base/grafana.yaml`.
+4. Anonymous Grafana access and a fixed `GF_SECURITY_ADMIN_PASSWORD` are fine only because this is
+   never exposed beyond `kubectl port-forward` on the owner's own machine — would need real auth
+   before any cloud overlay (Phase 5) exposed it further.
+
+**Rollback Plan**
+`kubectl delete -f k8s/base/prometheus.yaml -f k8s/base/grafana.yaml` (or just drop both from
+`k8s/base/kustomization.yaml` and re-apply) removes both. Also revert the `backend-headless`
+addition in `backend-service.yaml`, `scripts/k8s-up.sh`'s new rollout checks, and delete
+`scripts/k8s-dashboards.sh`. The app itself has no dependency on any of this — it keeps running
+unmodified either way.
+
+---
+
+### CHG-0032 — Load Testing (`loadtest/socketio-load.js`)
+
+| Field | Value |
+|---|---|
+| **Change ID** | CHG-0032 |
+| **Date Raised** | 2026-10-20 |
+| **Date Implemented** | 2026-10-20 |
+| **Author** | Parth |
+| **Module / Component** | Load testing |
+| **Change Type** | Feature |
+| **Risk Level** | Low |
+| **Status** | Verified |
+
+**Description**
+Third step of Phase 4 (PLAN.md Phase 7): a k6 script that fakes many simultaneous chat users
+against a running backend (local, Docker Compose, or k3d — anything `BASE` points at).
+
+- **The protocol problem PLAN.md flagged as the biggest risk here:** k6 has no Socket.IO client.
+  The script speaks Engine.IO/Socket.IO directly over a raw WebSocket — connects with
+  `?EIO=4&transport=websocket`, waits for the server's Engine.IO open packet, sends a Socket.IO
+  connect packet carrying the JWT (`40{"token":...}`, the same `auth` payload
+  `backend/src/socket/socket.js`'s `io.use()` reads), then sends/receives events as
+  `42[...]`/ack replies as `43<id>[...]`. Found and handled one real gotcha while building this:
+  Socket.IO v4 flipped ping/pong direction from earlier versions — the *server* pings (`"2"`), the
+  *client* must pong (`"3"`) within `pingTimeout` (20s) or silently gets dropped. Missing this
+  would have looked like "VUs randomly disconnect after ~20s" with no obvious cause.
+- **Real users, not fabricated tokens:** each VU registers its own throwaway user via the actual
+  `POST /api/auth/register` endpoint (same one the UI uses — mirrors the existing convention in
+  `backend/tests/lib.js`'s `register()`), rather than forging JWTs against a shared secret read out
+  of `k8s/overlays/local/secret.env`. Inherits whatever database the target backend is already
+  running with — never touches Supabase itself, same rule as every other test script here.
+  `setup()` runs once, creates one throwaway space + channel + invite code; every VU joins it via
+  the real `POST /api/servers/join` endpoint before connecting (channel membership is required to
+  send — `getAccessibleChannel` in `messageHandlers.js` checks it), so all VUs land in the same
+  shared channel and genuinely broadcast-fan-out to each other, not into separate rooms.
+- **Load shape** (PLAN.md Phase 7): each VU holds one connection for its lifetime, sending a chat
+  message every `MESSAGE_INTERVAL_MS` (default 5000, matching "~5s" in the plan). Two profiles:
+  `local` (default, ramps to 20 VUs — "rehearse at 20 VUs locally before spending cloud VUH") and
+  `full` (0→50→100→150 VUs, 2-minute hold — the plan's real profile, sized for the off-host
+  Grafana Cloud k6 runner against a real cluster, not this laptop's 2-pod local deployment).
+- **Metrics:** `connect_success` / `join_channel_success` (Rate), `message_ack_latency` (Trend —
+  the client-perceived round trip, counterpart to the server-side
+  `chatscale_broadcast_latency_seconds` from CHG-0030), `chat_messages_sent`/`_acked` (Counter),
+  plus whatever k6's `k6/ws` module reports for free (`ws_connecting`, `ws_msgs_sent/received`,
+  `ws_sessions`). Thresholds set loosely for a local rehearsal (`p95 < 2000ms`, success rates
+  `>95%`) — exploratory limits, not SLA claims.
+- Added `k6` via `brew install k6` (not yet in any `brew bundle`/`Brewfile` this project uses —
+  there isn't one; README documents the install step like it already does for `k3d`/`kubectl`).
+
+**Why now:** next item on `docs/STATUS.md`'s step 4 list, raised directly by the owner.
+
+**Files Added**
+- `loadtest/socketio-load.js`
+
+**Files Modified**
+- `README.md`, `docs/STATUS.md`, `docs/CHANGE_LOG.md`
+
+**Verification**
+Ran against the live k3d cluster (not just syntax-checked). A `smoke` profile (2 VUs, 15s) first,
+to validate the protocol parsing cheaply: 100% connect/join success, 7 messages sent and acked,
+p95 ack latency 16.39ms. Cross-checked against Prometheus directly — `chatscale_messages_total`
+on the backend pod the VUs landed on read back exactly `7`, confirming the k6 traffic was real
+traffic the app's own instrumentation (CHG-0030) also saw, not an artifact of the test script.
+Then ran the actual default `local` profile end to end (20 VUs, ~1.5 min): 100% connect success,
+100% join success, 328 messages sent and acked with zero failures, p95 ack latency 17.64ms, all
+three thresholds passed. `ws_msgs_received: 7109` versus `328` sent confirms the broadcast fan-out
+is real — every VU receiving every other VU's messages in the shared channel, not isolated rooms.
+
+**Known Limitations**
+1. **Not yet run at the `full` profile (150 VUs) or against anything but the local 2-pod k3d
+   deployment.** That's explicitly cloud/Phase-7 scope (Grafana Cloud k6, off-host, against a
+   cluster with CPU `requests`/`limits` and real node sizing) — running 150 VUs against 2 local
+   pods on a laptop would mostly measure the laptop, not the app.
+2. **No client-side delivery-latency measurement** (receiving client's own perceived latency,
+   `chatscale_delivery_latency_seconds` same_pod/cross_pod from CHG-0030) — this script measures
+   send-to-ack latency, not send-to-every-receiver latency. Closing that gap means each VU timing
+   its own `message:new` receipts, deferred as a possible follow-up, not required for this step.
+3. **No HPA yet to react to this load** — `metrics-server` isn't installed, so there's nothing
+   watching `chatscale_socket_connections`/CPU to scale on. Next piece of Phase 4, not this one.
+
+**Rollback Plan**
+Delete `loadtest/socketio-load.js`. Nothing else depends on it; it only ever adds throwaway users
+and a throwaway space to whichever database `BASE` points at, same as the existing test suites.
 
 ---
 

@@ -9,6 +9,7 @@ const { initializeSocket } = require('./src/socket/socket');
 const realtimeAdapter = require('./src/socket/adapter');
 const errorHandler = require('./src/middleware/errorHandler');
 const lifecycle = require('./src/lifecycle');
+const metrics = require('./src/metrics');
 const db = require('./src/config/db');
 
 const authRoutes = require('./src/routes/authRoutes');
@@ -27,9 +28,11 @@ const io = initializeSocket(server);
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-// Health checks come before request logging: orchestrators poll them every few seconds
+// Health checks and metrics come before request logging: orchestrators and Prometheus poll these
+// every few seconds and don't need to show up in the access log
 app.get('/healthz', lifecycle.liveness);
 app.get('/readyz', lifecycle.readiness);
+app.get('/metrics', metrics.handler);
 
 app.use(morgan('dev'));
 

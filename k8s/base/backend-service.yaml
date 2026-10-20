@@ -12,3 +12,19 @@ spec:
   ports:
     - port: 5001
       targetPort: 5001
+---
+# Headless (clusterIP: None): DNS returns one A record per ready backend pod instead of load-
+# balancing to a single one. Prometheus's dns_sd_configs (k8s/base/prometheus.yaml) uses this to
+# discover and scrape every pod individually — the Service above would only ever hand a scrape
+# request to whichever one pod it happened to route to.
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-headless
+spec:
+  clusterIP: None
+  selector:
+    app: backend
+  ports:
+    - port: 5001
+      targetPort: 5001

@@ -99,6 +99,14 @@ PostgreSQL — never Supabase); a cloud overlay is a later addition, not a rewri
 fresh cluster pulls several images from inside the cluster (not this Mac's Docker cache) and can
 take a few minutes on a slow network — re-running the script picks up where it left off.
 
+The backend exposes Prometheus metrics at `GET /metrics` (connections, messages, broadcast
+latency; see `backend/src/metrics.js`). Prometheus and Grafana run as two more pods in the same
+k3d cluster, scraping it automatically — nothing to configure:
+
+```bash
+./scripts/k8s-dashboards.sh      # Grafana: http://localhost:3001  Prometheus: http://localhost:9090
+```
+
 ### Tests
 
 API suites (accounts, friends, spaces, messages, invitations, two-factor, cross-copy delivery),
@@ -117,6 +125,21 @@ cd backend && node tests/failover.k8s.js         # deletes one k8s pod, checks t
 ```
 
 Don't point the suites at a backend using a real database (e.g. Supabase): they create users.
+
+### Load testing
+
+`loadtest/socketio-load.js` fakes many simultaneous chat users against any running backend. k6 has
+no Socket.IO client, so it speaks the Engine.IO/Socket.IO protocol directly over a raw WebSocket —
+see the script's header comment for the full protocol cheatsheet.
+
+```bash
+brew install k6
+k6 run loadtest/socketio-load.js                     # local rehearsal: ramps to 20 VUs
+k6 run -e PROFILE=full loadtest/socketio-load.js      # PLAN.md's real profile: 0->50->100->150 VUs
+```
+
+Like the test suites, it only ever creates throwaway users (via the real `/api/auth/register`
+endpoint) in whichever database `BASE` points at — never Supabase.
 
 ### Running two backend copies (the scaling experiment)
 

@@ -8,6 +8,8 @@ resources:
   - frontend-nginx-configmap.yaml
   - frontend-deployment.yaml
   - redis.yaml
+  - prometheus.yaml
+  - grafana.yaml
   - ingress.yaml
 # backend-config and backend-secret come from an overlay (local/ or azure/), which knows which
 # database to use. The base intentionally does not define them, so it can never accidentally ship

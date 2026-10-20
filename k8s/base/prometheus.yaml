@@ -1,0 +1,78 @@
+# Prometheus: scrapes GET /metrics on every backend pod on a timer and keeps a short history of
+# it. Deliberately NOT the kube-prometheus-stack Helm chart PLAN.md originally named — that brings
+# an operator, CRDs, node-exporter and kube-state-metrics, which is a lot of new machinery (and
+# resource requests) for a 3-node laptop cluster that just needs one app's own /metrics scraped.
+# This is the same "one small Deployment + Service" shape as redis.yaml and postgres.yaml.
+#
+# Discovery: dns_sd_configs against the backend-headless Service (backend-service.yaml) — every
+# ready backend pod gets its own DNS A record, so this needs no Kubernetes API access (no
+# ServiceAccount/RBAC), unlike the usual kubernetes_sd_configs approach.
+#
+# No persistent volume: metrics history is lost if this pod restarts. Fine for a local, short-
+# retention, throwaway experiment cluster — see docs/CHANGE_LOG.md CHG-0031.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 10s
+    scrape_configs:
+      - job_name: chatscale-backend
+        metrics_path: /metrics
+        dns_sd_configs:
+          - names: ["backend-headless.chatscale.svc.cluster.local"]
+            type: A
+            port: 5001
+            refresh_interval: 15s
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v2.54.1
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.retention.time=6h
+          ports:
+            - containerPort: 9090
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: 9090
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+      volumes:
+        - name: config
+          configMap:
+            name: prometheus-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+spec:
+  selector:
+    app: prometheus
+  ports:
+    - port: 9090
+      targetPort: 9090

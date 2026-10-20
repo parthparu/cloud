@@ -69,7 +69,19 @@ kubectl -n "$NS" rollout status deployment/backend --timeout=180s
 backend_status=$?
 kubectl -n "$NS" rollout status deployment/frontend --timeout=120s
 frontend_status=$?
+# Prometheus/Grafana images are large and this network sometimes stalls mid-pull (see hard rule 5
+# in docs/STATUS.md) — give them a generous timeout but don't fail k8s-up.sh over a dashboard.
+kubectl -n "$NS" rollout status deployment/prometheus --timeout=240s
+prometheus_status=$?
+kubectl -n "$NS" rollout status deployment/grafana --timeout=240s
+grafana_status=$?
 set -e
+if [ "$prometheus_status" != 0 ] || [ "$grafana_status" != 0 ]; then
+  echo
+  echo "Prometheus/Grafana are not ready yet (the app itself is fine). If this is a fresh cluster,"
+  echo "the images are probably still pulling: 'kubectl -n $NS get pods' to check, or nudge a slow"
+  echo "pull along with 'docker exec <node> crictl pull <image>' on the specific k3d node."
+fi
 if [ "$pg_status" != 0 ] || [ "$redis_status" != 0 ] || [ "$backend_status" != 0 ] || [ "$frontend_status" != 0 ]; then
   echo
   echo "NOT READY after the wait above. This almost always means an image is still being pulled"
@@ -93,5 +105,6 @@ kubectl -n "$NS" get pods -l app=backend -o wide
 echo
 echo "Try:  kubectl -n chatscale get pods -w"
 echo "      kubectl -n chatscale delete pod <name>        (kill one, watch it get replaced)"
+echo "      ./scripts/k8s-dashboards.sh                   (Grafana + Prometheus, localhost:3001/:9090)"
 echo "      ./scripts/k8s-down.sh                         (tear the cluster down)"
 echo "------------------------------------------------------------"

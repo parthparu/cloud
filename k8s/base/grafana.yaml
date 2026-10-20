@@ -1,0 +1,175 @@
+# Grafana: draws graphs from whatever Prometheus has stored. Everything here is "provisioning" —
+# config files Grafana reads on startup — so the Prometheus data source and the one dashboard
+# below both exist the moment the pod comes up, with nothing to click through in the UI.
+#
+# Reached only via `kubectl port-forward` (scripts/k8s-dashboards.sh) — never put behind the
+# Ingress, so it's never reachable from outside this machine. Anonymous viewer access is enabled
+# for that reason: there is no login wall to get in the way of a local-only, throwaway dashboard.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+data:
+  datasource.yml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        access: proxy
+        url: http://prometheus:9090
+        isDefault: true
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-provider
+data:
+  provider.yml: |
+    apiVersion: 1
+    providers:
+      - name: chatscale
+        type: file
+        options:
+          path: /var/lib/grafana/dashboards
+---
+# The dashboard itself. Panels cover what backend/src/metrics.js (CHG-0030) actually feeds today:
+# connections, messages/sec, broadcast latency. chatscale_delivery_latency_seconds (same_pod /
+# cross_pod) has no data yet — that needs a frontend round trip, wired up with the load test
+# (PLAN.md Phase 6) — so it has no panel here yet either.
+#
+# Gotcha found while verifying this: Prometheus overwrites a scraped sample's "instance" label
+# with its own scrape-target address (pod-ip:5001) and renames the app's own "instance" label
+# (set in backend/src/metrics.js) to "exported_instance" — so panels that want the readable pod
+# name, not an IP, must say {{exported_instance}}, not {{instance}}.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-chatscale
+data:
+  chatscale.json: |
+    {
+      "uid": "chatscale-overview",
+      "title": "ChatScale — Backend Overview",
+      "schemaVersion": 39,
+      "version": 1,
+      "timezone": "browser",
+      "refresh": "5s",
+      "time": { "from": "now-15m", "to": "now" },
+      "panels": [
+        {
+          "id": 1,
+          "title": "Connections by pod",
+          "type": "timeseries",
+          "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+          "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+          "targets": [
+            { "expr": "chatscale_socket_connections", "legendFormat": "{{exported_instance}}", "refId": "A" }
+          ]
+        },
+        {
+          "id": 2,
+          "title": "Messages / sec",
+          "type": "timeseries",
+          "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+          "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+          "targets": [
+            { "expr": "sum(rate(chatscale_messages_total[1m]))", "legendFormat": "messages/sec", "refId": "A" }
+          ]
+        },
+        {
+          "id": 3,
+          "title": "Broadcast latency (p50 / p95)",
+          "type": "timeseries",
+          "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
+          "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.5, sum(rate(chatscale_broadcast_latency_seconds_bucket[5m])) by (le))",
+              "legendFormat": "p50",
+              "refId": "A"
+            },
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(chatscale_broadcast_latency_seconds_bucket[5m])) by (le))",
+              "legendFormat": "p95",
+              "refId": "B"
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "title": "Backend pods up",
+          "type": "stat",
+          "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
+          "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+          "targets": [
+            { "expr": "count(up{job=\"chatscale-backend\"})", "legendFormat": "pods", "refId": "A" }
+          ]
+        }
+      ]
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+        - name: grafana
+          image: grafana/grafana:11.2.0
+          ports:
+            - containerPort: 3000
+          env:
+            # Local-only cluster, reached only via port-forward (see header comment) — a fixed
+            # admin password here is not a secret worth putting in a Secret
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              value: chatscale
+            - name: GF_AUTH_ANONYMOUS_ENABLED
+              value: "true"
+            - name: GF_AUTH_ANONYMOUS_ORG_ROLE
+              value: Viewer
+          volumeMounts:
+            - name: datasources
+              mountPath: /etc/grafana/provisioning/datasources
+            - name: dashboard-provider
+              mountPath: /etc/grafana/provisioning/dashboards
+            - name: dashboards
+              mountPath: /var/lib/grafana/dashboards
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 96Mi
+      volumes:
+        - name: datasources
+          configMap:
+            name: grafana-datasources
+        - name: dashboard-provider
+          configMap:
+            name: grafana-dashboard-provider
+        - name: dashboards
+          configMap:
+            name: grafana-dashboard-chatscale
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+spec:
+  selector:
+    app: grafana
+  ports:
+    - port: 3000
+      targetPort: 3000
