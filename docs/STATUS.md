@@ -103,6 +103,7 @@ for the full reasoning and CHG-0033 for the formal record.
 | 5 | ~~Cloud~~ (real machines, Cluster Autoscaler, zone failures, public link) | **DESCOPED (r4)** — Azure verification never resolved; project scope finalized at local k3d — see `PLAN.md`'s r4 amendment, CHG-0033 |
 | 6 | **Write-up:** [docs/REPORT.md](REPORT.md) — findings, cost model, full reproduction guide | ✅ Built & tested — **⚠️ NOT pushed**, see above — CHG-0036 |
 | — | **Project complete.** | ✅ |
+| 7 | **OpenShift** (hosted Developer Sandbox) as a second deployment target, after the demo | 📝 **Proposed** — plan in [OPENSHIFT.md](OPENSHIFT.md), CHG-0041. Needs the owner's Red Hat account + `oc login`. k3d stays the demo stack |
 
 ---
 

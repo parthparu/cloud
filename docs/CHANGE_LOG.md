@@ -57,6 +57,10 @@
 | CHG-0037 | 2026-10-20 | Parth | Documentation | docs/DEMO.md: added optional Part 3 (live Kubernetes/Grafana/autoscaling demo), new FAQ entries, and a rehearsal checklist, for a faculty presentation the next day | Documentation | Low | Implemented |
 | CHG-0038 | 2026-10-20 | Parth | Documentation | docs/REPORT-handout.md/.pdf: one-page printable extract of REPORT.md §7/§9 (scope limitations + honesty notes), for faculty Q&A prep | Documentation | Low | Implemented |
 | CHG-0039 | 2026-10-21 | Parth | Demo tooling | scripts/demo-two-copies.sh: new `--lan` flag / `DEMO_HOST` variable so Bob can use a second computer on the same network (default unchanged) | Feature | Low | Implemented |
+| CHG-0040 | 2026-10-21 | Parth | Channels (backend + frontend) | Delete-channel feature: UI button for the space owner with confirmation, live `channel:deleted` broadcast so other members' sidebars update, sockets removed from the deleted room; new test suite. **Staged as a patch, not yet applied** | Feature | Low | Proposed |
+| CHG-0041 | 2026-10-21 | Parth | Planning / Infrastructure | Decision to add Red Hat OpenShift (hosted Developer Sandbox) as a second deployment target after the demo, k3d unchanged; plan in docs/OPENSHIFT.md; `oc` CLI installed. **No deployment yet** | Planning | Low | Proposed |
+| CHG-0042 | 2026-10-21 | Parth | Infrastructure (OpenShift) | Single-file OpenShift deployment for the web console's Import YAML (builds, Postgres, Redis, 2 backends, frontend, Route) + generator script for secrets; validated locally, **not yet imported on a real sandbox** | Feature | Medium | In Progress |
+| CHG-0043 | 2026-10-21 | Parth | OpenShift / Performance | Diagnosed slowness on the hosted sandbox (distance to US-East + uncompressed JS), added gzip to the OpenShift nginx config (JS -70%), `--update` mode for the generator, documented the update workflow | Fix | Low | Implemented |
 ---
 
 ## 2. Detailed Entries
@@ -2639,6 +2643,238 @@ changes.
 Revert `scripts/demo-two-copies.sh` to its pre-CHG-0039 state (the `HOST`/`CLIENT_*` block, the
 `--lan` flag and the banner addition); revert the three doc edits. Default behaviour is identical
 either way.
+
+---
+
+### CHG-0040 — Delete a Channel (staged patch, not yet applied)
+
+| Field | Value |
+|---|---|
+| **Change ID** | CHG-0040 |
+| **Date Raised** | 2026-10-21 |
+| **Date Implemented** | 2026-10-21 (built and tested in an isolated copy) |
+| **Author** | Parth |
+| **Module / Component** | Channels (backend + frontend) |
+| **Change Type** | Feature |
+| **Risk Level** | Low |
+| **Status** | **Proposed** — delivered as `delete-channel.patch`; apply with `git apply` when ready |
+
+**Description**
+"Delete chat" was interpreted as deleting a channel (the app's chat rooms; deleting a single
+message already existed, and direct messages were removed in CHG-0025). The backend already had
+`DELETE /api/channels/:id` (channel owner or space owner only; deletes the channel's messages
+first) but it had no UI and told nobody else, so other members kept seeing a channel that no
+longer existed. Added:
+- **Backend** (`channelController.deleteChannel`): after a successful delete, emits
+  `channel:deleted {id, serverId}` to the space's room — the same pattern `channel:created` uses —
+  and removes any sockets still in `channel:<id>` from that room (`socketsLeave`, which the Redis
+  adapter propagates across backend copies).
+- **Frontend** (`WorkspaceContext`, `ChannelPage`, `channel.css`): a **Delete channel** button in
+  the channel header for the space owner, behind a confirm naming the channel and warning that its
+  messages are deleted for everyone; a `channel:deleted` listener that removes the channel from
+  the sidebar for every member. A user viewing the deleted channel is redirected by the existing
+  "channel no longer exists" rule. Deleting a space's last channel is allowed — `SpacePage`
+  already handles "no channels yet".
+- **Test** (`backend/tests/channel-delete.test.js`, picked up by `npm run test:api`): a member
+  cannot delete (403), the owner can, the other member is told live, the channel and its messages
+  are gone, nobody can post to it, a repeat delete is a clean 404.
+
+**Why staged as a patch:** raised while the owner's demo was running (`--fixed --lan`). The
+frontend dev server hot-reloads on any `frontend/src` change, and `docs/DEMO.md` documents that a
+reload ruins the demo, so the project folder was not edited. The work was built and tested in a
+scratch copy; the demo was verified still running and untouched afterward.
+
+**Files (in the patch):** `backend/src/controllers/channelController.js`,
+`backend/tests/channel-delete.test.js` (new), `frontend/src/context/WorkspaceContext.js`,
+`frontend/src/pages/channel/ChannelPage.js`, `frontend/src/styles/channel.css`.
+
+**Verification**
+- New suite against a throwaway backend (empty `DATABASE_URL`, scratch SQLite — never Supabase):
+  11/11 checks pass. **Negative control:** with the original controller restored, exactly one
+  check fails ("bob is told live"), so the test detects the new behaviour.
+- Existing suites `core`, `invitations`, `two-factor` still pass. `cross-copy` was not run (it
+  needs two live copies).
+- In a real browser against a scratch dev server on its own port and its own build cache: the owner
+  sees the button and the confirm text names the channel; a plain member does not see the button;
+  after the owner deletes, a second logged-in member's untouched tab moved to `#general` and lost
+  the channel from its sidebar on its own; the button sits in the header beside Invite, in the app's
+  danger colour, without overflow.
+- `git apply --check` confirms the patch applies cleanly to the project.
+
+**Known Limitations**
+1. The browser test stubbed `window.confirm` to capture its text, so the native dialog itself was
+   not exercised (the same `window.confirm` pattern already used for deleting a message).
+2. Only the space owner sees the button, although the backend also lets a channel's creator
+   delete it; the frontend's channel shape doesn't carry the creator id. The backend remains the
+   authority either way.
+3. Not tested across two backend copies with Redis; `socketsLeave`/`emit` use the adapter, which
+   the existing cross-copy behaviour already relies on.
+4. New feature, not rehearsed against the demo scripts — apply it after the presentation unless
+   there is time to rehearse.
+
+**Rollback Plan**
+`git apply -R delete-channel.patch` (or revert the five files). The backend endpoint existed before
+this change and is unaffected.
+
+---
+
+### CHG-0041 — Red Hat OpenShift as a Second Deployment Target (plan only)
+
+| Field | Value |
+|---|---|
+| **Change ID** | CHG-0041 |
+| **Date Raised** | 2026-10-21 |
+| **Date Implemented** | — (plan and tooling only) |
+| **Author** | Parth |
+| **Module / Component** | Planning / Infrastructure |
+| **Change Type** | Planning |
+| **Risk Level** | Low (nothing deployed; k3d untouched) |
+| **Status** | **Proposed** |
+
+**Description**
+The owner asked to use Red Hat OpenShift for the project, on the day of the faculty demo. After
+checking feasibility, the decision (asked and answered, not assumed) was: add OpenShift **after the
+demo and alongside k3d**, targeting the free hosted *Developer Sandbox for Red Hat OpenShift*, with
+the owner creating the Red Hat account. Recorded in `docs/OPENSHIFT.md`.
+
+**Findings behind the decision**
+- Local OpenShift (CRC) is not viable on this Mac: it needs roughly 4 CPUs / 10.5 GB RAM / 35 GB disk
+  (from memory, to be verified) against ~10 GB free disk and 7.7 GB allotted to Docker.
+- The hosted Sandbox is real cloud OpenShift, so it also revisits the real-cloud gap descoped in
+  CHG-0033, without a card. Its limits could not be confirmed for 2026 (a community reply cited ~3
+  cores / 14 GB RAM / 40 GB storage and a 30-day lifetime — unverified, possibly outdated).
+- Our own images already run non-root (`USER node`; nginx-unprivileged on 8080), as OpenShift
+  requires; the third-party infrastructure images (Postgres, Redis, Grafana, Prometheus) are the
+  unknown. The Mac is arm64, so images must be built in-cluster for x86_64 nodes.
+- The connection-count autoscaler (`prometheus-adapter`) needs cluster-wide permissions a shared
+  sandbox almost certainly won't grant; expected to be a documented limitation there.
+
+**Done in this change:** `docs/OPENSHIFT.md` written; `oc` (4.22.18) installed via Homebrew
+(`brew uninstall openshift-cli` removes it). **Not done:** any account, login, manifest, image build
+or deployment.
+
+**Why not now:** the owner is presenting the rehearsed k3d stack today; changing the demo stack
+beforehand was advised against and the owner agreed.
+
+**Files Added/Modified:** `docs/OPENSHIFT.md` (new), `docs/CHANGE_LOG.md`
+
+**Verification:** `oc version --client` runs; the feasibility facts above were checked on this
+machine (`sysctl`, `df`, `docker info`) and against the Dockerfiles, not assumed.
+
+**Known Limitations:** requires the owner's own Red Hat account and `oc login`; sandbox limits are
+unverified until probed; the plan may shrink once the real quota and permissions are known.
+
+**Rollback Plan:** delete `docs/OPENSHIFT.md`; `brew uninstall openshift-cli`. Nothing else depends on it.
+
+---
+
+### CHG-0042 — One-File OpenShift Deployment (Import YAML)
+
+| Field | Value |
+|---|---|
+| **Change ID** | CHG-0042 |
+| **Date Raised** | 2026-10-21 |
+| **Date Implemented** | 2026-10-21 (written and locally validated) |
+| **Author** | Parth |
+| **Module / Component** | Infrastructure (OpenShift) |
+| **Change Type** | Feature |
+| **Risk Level** | Medium (untested on OpenShift; touches nothing existing) |
+| **Status** | **In Progress** — awaiting the first real import |
+
+**Description**
+The owner, already in the Developer Sandbox web console, asked for a YAML file to upload (a friend
+had pointed to *Import YAML*). Added `k8s/openshift/chatscale-sandbox.template.yaml` — 17 objects:
+two in-cluster image builds from the public GitHub repo (BuildConfig + ImageStream; the Mac is
+arm64 and the cluster is likely x86_64, so local builds would not run there), PostgreSQL (Red Hat
+`sclorg` image, which tolerates OpenShift's random user ID, with a 1 Gi disk), Redis (`sclorg`),
+the backend at 2 copies, the frontend (nginx, with the same proxy config as the k3d setup), Services,
+and a TLS `Route`. Deployments use OpenShift image-trigger annotations so the built image is swapped
+in automatically.
+
+`scripts/openshift-make-yaml.sh` fills three secrets (JWT key, two-factor key, database password)
+with fresh `openssl rand` values and writes the upload copy to `~/Downloads/` with mode 600,
+**outside git**; the repo holds only the placeholder template. It refuses to leave a file behind if
+any placeholder is unfilled (this check caught a false positive in its own first version — a
+comment containing a placeholder-shaped word — fixed by tightening the check to the three real names).
+
+**Deliberate choices**
+- `SEED_DEMO_DATA=false`: the demo users have a password written in source, which the project's own
+  rule forbids on anything reachable from the internet; a Route is public.
+- No namespace in any object (the sandbox fixes your project) and nothing cluster-scoped; no
+  `prometheus-adapter` (a shared sandbox won't grant it), so no connection-count autoscaling there.
+- Resource limits sized to the reported sandbox quota (~3 CPU / 14 GB, unverified): ~1.1 CPU while
+  running, 2.6 CPU while both builds run.
+- Security context: no privilege escalation, all capabilities dropped, default seccomp; no explicit
+  `runAsNonRoot`/UID (OpenShift assigns one; our images already run non-root).
+
+**Verification**
+- Generated file: 17 documents, all parse, all well-formed, none with a namespace; no placeholders
+  left; mode 600; the two image-trigger annotations are valid JSON and name real containers; both
+  BuildConfigs output to ImageStreams defined in the file.
+- The 12 standard objects passed `kubectl apply --dry-run=server` against the k3d API (0 errors;
+  confirmed nothing was created).
+- **Not verified:** the 3 OpenShift-only kinds (ImageStream, BuildConfig, Route) cannot be checked
+  without an OpenShift API; the sandbox's real quota, the image pulls, the builds, and the Route's
+  WebSocket behaviour. The first real import is the test.
+
+**Known Limitations / risks:** Docker Hub rate limits during builds; quota rejections; sandbox
+limits unknown; free-tier lifetime (reported 30 days). The generated file contains secrets and must
+not be committed or shared. Re-running the script makes new secrets — do not re-import over an
+existing database.
+
+**Files Added:** `k8s/openshift/chatscale-sandbox.template.yaml`, `scripts/openshift-make-yaml.sh`
+**Files Modified:** `docs/OPENSHIFT.md`, `docs/CHANGE_LOG.md`
+
+**Rollback Plan:** delete the two new files and the OpenShift section of `docs/OPENSHIFT.md`. In the
+sandbox, delete the created objects (or the project's resources) from the console. Nothing in the
+k3d/laptop demo setup depends on any of this.
+
+---
+
+### CHG-0043 — OpenShift: Slowness Diagnosed, gzip Added, Update Workflow
+
+| Field | Value |
+|---|---|
+| **Change ID** | CHG-0043 |
+| **Date Raised** | 2026-10-21 |
+| **Date Implemented** | 2026-10-21 (template + docs); **not yet applied to the live sandbox** |
+| **Author** | Parth |
+| **Module / Component** | OpenShift deployment |
+| **Change Type** | Fix |
+| **Risk Level** | Low |
+| **Status** | Implemented (awaiting application to the sandbox) |
+
+**Description**
+The owner reported the hosted app as "too slow". Measured instead of guessing (curl timings against
+the live Route, from India): the server is AWS us-east-1; each new HTTPS connection costs ~1 s
+before the first byte (server processing ~0.3 s), so the dominant cost is network distance, which
+cannot be changed (no region choice in the sandbox). One inefficiency was ours: the 296 KB JS bundle
+was served uncompressed (3.4 s) because the nginx config never enabled gzip. Also checked and ruled
+out: socket transport (already WebSocket-only, per `frontend/src/lib/socket.js`).
+
+**Changes**
+- `k8s/openshift/chatscale-sandbox.template.yaml`: `gzip on` (+ vary, level 5, min length, text types)
+  in the nginx ConfigMap; frontend CPU limit 100m → 200m for compression headroom (running limits ~1.2 CPU).
+- `scripts/openshift-make-yaml.sh`: new `--update` mode that omits the Secret, so a changed template
+  can be re-applied without regenerating passwords that no longer match the database.
+- `docs/OPENSHIFT.md`: performance findings and an "Updating a running app" section (the cluster
+  builds from GitHub `main`, so local edits need a push *and* a rebuild; which change needs which
+  action; a separate kubeconfig so `oc login` cannot redirect the k3d demo scripts).
+- `~/Downloads/chatscale-gzip-fix.yaml` (outside git): the nginx ConfigMap alone, for applying to the live app.
+
+**Verification**
+Ran the real frontend image locally with the new config on a spare port: nginx accepted it; JS
+296,031 → 87,087 bytes (−70%) and CSS 35,180 → 7,201 (−79%) with `Content-Encoding: gzip`; the page and
+health check still served. `--update` output: 16 documents, no Secret, no secret-looking strings;
+normal mode unchanged (17 documents). The fix file: parses, one ConfigMap, identical to the template's,
+accepted by a server-side dry run, no secrets. The test container was removed afterwards.
+
+**Not done / limitations:** the fix has not been applied to the live sandbox (needs the owner's console
+edit or `oc login`); the ~0.3–0.6 s per-request round trip to US-East remains. Before/after timings on
+the live route are still to be measured once applied.
+
+**Rollback Plan:** revert the template/script edits; on the sandbox re-apply the previous ConfigMap
+(remove the gzip lines) and restart the frontend.
 
 ---
 
