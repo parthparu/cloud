@@ -55,6 +55,8 @@
 | CHG-0035 | 2026-10-20 | Parth | Experiments / Write-up | PLAN.md Phase 6 measured: Redis tax (negligible locally — explained) and scaling efficiency (p95 latency 110ms->85ms->34ms, 1->2->4 pods) | Feature | Low | Verified |
 | CHG-0036 | 2026-10-20 | Parth | Documentation | docs/REPORT.md: the project's final write-up, synthesizing every measured result (CHG-0023-0035) against PLAN.md's thesis table, with an estimated cost model (step 6 of 6 — project complete) | Documentation | Low | Verified |
 | CHG-0037 | 2026-10-20 | Parth | Documentation | docs/DEMO.md: added optional Part 3 (live Kubernetes/Grafana/autoscaling demo), new FAQ entries, and a rehearsal checklist, for a faculty presentation the next day | Documentation | Low | Implemented |
+| CHG-0038 | 2026-10-20 | Parth | Documentation | docs/REPORT-handout.md/.pdf: one-page printable extract of REPORT.md §7/§9 (scope limitations + honesty notes), for faculty Q&A prep | Documentation | Low | Implemented |
+| CHG-0039 | 2026-10-21 | Parth | Demo tooling | scripts/demo-two-copies.sh: new `--lan` flag / `DEMO_HOST` variable so Bob can use a second computer on the same network (default unchanged) | Feature | Low | Implemented |
 ---
 
 ## 2. Detailed Entries
@@ -2537,6 +2539,106 @@ checking that the demo script's instructions match what those commands actually 
 **Rollback Plan**
 Revert `docs/DEMO.md` to its pre-CHG-0037 state (Parts 1–2 only, FAQ without the six new entries).
 Nothing else depends on it — Parts 1–2 work identically either way.
+
+---
+
+### CHG-0038 — Faculty Handout (`docs/REPORT-handout.md`/`.pdf`)
+
+| Field | Value |
+|---|---|
+| **Change ID** | CHG-0038 |
+| **Date Raised** | 2026-10-20 |
+| **Date Implemented** | 2026-10-20 |
+| **Author** | Parth |
+| **Module / Component** | Documentation |
+| **Change Type** | Documentation |
+| **Risk Level** | Low |
+| **Status** | Implemented |
+
+**Description**
+Printable extract of `docs/REPORT.md` §7 ("What this project deliberately does not claim") and §9
+("Methodology notes and honesty") — the two sections most useful to have on hand for Q&A from
+someone technical, per the owner's own framing. `.md` source plus a one-page `.pdf` generated with
+`reportlab` (installed for this purpose) for actual printing.
+
+**Why now:** raised directly by the owner, same-day, ahead of the faculty presentation these
+sections are meant to support.
+
+**Files Added**
+- `docs/REPORT-handout.md`, `docs/REPORT-handout.pdf`
+
+**Files Modified**
+- `docs/CHANGE_LOG.md`
+
+**Verification**
+Generated PDF read back with `pypdf` to confirm it's a valid, single-page document with the
+expected text before sending it to the owner.
+
+**Rollback Plan**
+Delete both files. Pure derivative of `docs/REPORT.md` — nothing depends on it.
+
+---
+
+### CHG-0039 — Demo on Two Computers (`--lan`)
+
+| Field | Value |
+|---|---|
+| **Change ID** | CHG-0039 |
+| **Date Raised** | 2026-10-21 |
+| **Date Implemented** | 2026-10-21 |
+| **Author** | Parth |
+| **Module / Component** | Demo tooling |
+| **Change Type** | Feature |
+| **Risk Level** | Low |
+| **Status** | Implemented |
+
+**Description**
+`scripts/demo-two-copies.sh` always put both browser windows on one computer, because it hardcoded
+`localhost` in two places: the API address baked into each frontend (`REACT_APP_API_URL`) and each
+backend's `CLIENT_URL`, which `backend/src/socket/socket.js` uses as the allowed WebSocket origin.
+A browser on a second computer would have called `localhost` (itself) and failed with "Can't reach
+the server". Added a `HOST` variable, set by `--lan` (auto-detects this Mac's network address) or
+`DEMO_HOST=<address>`; default stays `localhost`, so the rehearsed behaviour is unchanged. When
+`HOST` is not `localhost`, the frontends call `http://$HOST:<port>` and `CLIENT_URL` is left empty,
+which the socket layer treats as "any origin" (`process.env.CLIENT_URL || '*'`) — the browser's
+address varies over a network. The "Ready." box prints the real addresses and the same-network
+caveats. `docs/DEMO.md`, `docs/demo-commands.txt` and `docs/demo-redis-failure-and-success.txt`
+updated.
+
+**Why now:** raised directly by the owner the day before presenting — two computers read as "two
+different people" and avoid the sleeping-browser-tab pitfall already documented in `DEMO.md`.
+
+**Files Modified**
+- `scripts/demo-two-copies.sh`, `docs/DEMO.md`, `docs/demo-commands.txt`,
+  `docs/demo-redis-failure-and-success.txt`, `docs/CHANGE_LOG.md`
+
+**Verification**
+Not run end to end, and that is stated plainly: the owner's own demo was already running on ports
+3000/3001/5001/5002 when this was tested, and was deliberately left alone. What was verified:
+`bash -n` syntax check; the script's argument handling traced with `bash -x` (it exits at the
+port check, before launching anything) for default, `--lan`, `--lan --fixed`, `DEMO_HOST=...` and
+an invalid flag — default keeps `localhost` and `CLIENT_*` URLs, `--lan` yields the Mac's address
+and empty `CLIENT_*`; against the owner's running (default-mode) demo, the dev server served 200
+on the network address with no "Invalid Host header" error, the backend answered on it, and its
+socket handshake returned `Access-Control-Allow-Origin: http://localhost:3001` — confirming
+that the original setup would block a page at a network address, which is exactly what `--lan`
+changes.
+
+**Known Limitations**
+1. `--lan` itself has not been run with a real second computer. It must be rehearsed once, on the
+   network that will be used for the presentation.
+2. While running in `--lan` mode the backends accept any WebSocket origin and are reachable by
+   anyone on the same network (REST endpoints still require a JWT). Acceptable for a short
+   supervised demo; documented in the script and `DEMO.md`, which tell the user to Ctrl-C after.
+3. Client-isolation on some networks (common on college Wi-Fi) blocks device-to-device traffic;
+   the script's output and `DEMO.md` say to use a phone hotspot in that case.
+4. Both backend copies still run on one Mac; only Bob's browser moves. Documented so it isn't
+   presented as separate servers.
+
+**Rollback Plan**
+Revert `scripts/demo-two-copies.sh` to its pre-CHG-0039 state (the `HOST`/`CLIENT_*` block, the
+`--lan` flag and the banner addition); revert the three doc edits. Default behaviour is identical
+either way.
 
 ---
 

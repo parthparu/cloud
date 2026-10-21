@@ -11,6 +11,9 @@
 #   ./scripts/demo-two-copies.sh --fixed   THE FIX: both copies share events through Redis (Valkey,
 #                                          started in Docker and removed again on exit)
 #
+#   ./scripts/demo-two-copies.sh --lan     TWO COMPUTERS: Alice on this Mac, Bob on another computer
+#                                          on the same Wi-Fi / hotspot (works with --fixed too)
+#
 # This terminal shows only the lines that matter; Ctrl-C stops everything.
 set -euo pipefail
 
@@ -20,15 +23,39 @@ mkdir -p "$LOG_DIR"
 
 MODE="broken"
 LOCAL_DB=false
+# The address the browsers use to reach this Mac. "localhost" = everything on this one computer
+# (the default, unchanged). --lan, or DEMO_HOST=<address>, swaps in this Mac's network address so a
+# second computer on the same network can open Bob's window.
+HOST="${DEMO_HOST:-localhost}"
 for arg in "$@"; do
   case "$arg" in
     --fixed) MODE="fixed" ;;
     # Ignore DATABASE_URL in backend/.env and use the local SQLite file (backend/data/chat.sqlite).
     # For networks that block database ports (5432), where Supabase can't be reached.
     --local-db) LOCAL_DB=true ;;
-    *) echo "Usage: $0 [--fixed] [--local-db]"; exit 1 ;;
+    --lan)
+      HOST="$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || true)"
+      if [ -z "$HOST" ]; then
+        echo "--lan: couldn't find this Mac's network address (is it on Wi-Fi or a hotspot?)."
+        echo "Find it yourself and run:  DEMO_HOST=<address> $0 ${*/--lan/}"
+        exit 1
+      fi
+      ;;
+    *) echo "Usage: $0 [--fixed] [--local-db] [--lan]"; exit 1 ;;
   esac
 done
+
+# Which browser addresses each backend accepts for live (WebSocket) connections. On one computer
+# that's just its own frontend. Over the network the browser's address varies (an IP, a hostname),
+# so any origin is accepted instead — fine for a demo, and the reason to stop the demo afterwards:
+# while it runs, anyone on the same network can reach these backends.
+if [ "$HOST" = localhost ]; then
+  CLIENT_A="http://localhost:3000"
+  CLIENT_B="http://localhost:3001"
+else
+  CLIENT_A=""
+  CLIENT_B=""
+fi
 
 REDIS_CONTAINER="chatscale-demo-valkey"
 REDIS_URL=""
@@ -89,10 +116,10 @@ start_frontend() {
 }
 
 echo "Starting two backend copies and two frontends (logs in .demo-logs/)..."
-start_backend copy-A 5001 http://localhost:3000
-start_backend copy-B 5002 http://localhost:3001
-start_frontend 3000 http://localhost:5001
-start_frontend 3001 http://localhost:5002
+start_backend copy-A 5001 "$CLIENT_A"
+start_backend copy-B 5002 "$CLIENT_B"
+start_frontend 3000 "http://$HOST:5001"
+start_frontend 3001 "http://$HOST:5002"
 
 # Both backend copies must be ready (database and Redis reachable) before we say "Ready"
 for port in 5001 5002; do
@@ -131,13 +158,23 @@ else
   MODE_LINE="BROKEN: no Redis — Bob will NOT get Alice's messages live"
 fi
 
+if [ "$HOST" = localhost ]; then
+  NET_LINE=""
+else
+  NET_LINE="
+  TWO COMPUTERS: Bob's computer must be on the SAME Wi-Fi / hotspot as this Mac.
+  If Bob's page won't load, the network is blocking device-to-device traffic
+  (common on college Wi-Fi) — switch both to a phone hotspot.
+  While this runs, anyone on that network can reach these backends. Ctrl-C when done."
+fi
+
 cat <<READY
 
   ------------------------------------------------------------
   Ready.  $MODE_LINE
   $DB_LINE
-    Alice: open http://localhost:3000   (badge: Live · copy-A)
-    Bob:   open http://localhost:3001   (badge: Live · copy-B)
+    Alice: open http://$HOST:3000   (badge: Live · copy-A)
+    Bob:   open http://$HOST:3001   (badge: Live · copy-B)$NET_LINE
   Watch this terminal: each message shows who it was delivered to.
   Press Ctrl-C to stop everything.
   ------------------------------------------------------------

@@ -59,6 +59,27 @@ cd ~/dev/wp_project && ./scripts/demo-two-copies.sh
 
 Wait for **"Ready."** (about 20 seconds). Refresh both browser windows once.
 
+### Optional: Bob on a second computer
+
+More convincing than two windows ("two different people"), and it avoids the sleeping-tab problem.
+
+```bash
+./scripts/demo-two-copies.sh --lan            # the problem
+./scripts/demo-two-copies.sh --fixed --lan    # the fix
+```
+
+`--lan` finds this Mac's network address and prints it in the "Ready." box, e.g.
+`Bob: open http://172.20.10.2:3001`. Alice opens her address on this Mac; **Bob types his address
+into a browser on the other computer.** Everything else in the demo is identical.
+
+- Both computers must be on the **same Wi-Fi or phone hotspot**. College Wi-Fi often blocks
+  device-to-device traffic — if Bob's page won't load, switch both to a hotspot.
+- The address changes with the network, so use the one the script prints, not one from yesterday.
+- Both backend copies still run on this Mac — the second computer is only Bob's browser. Say so if
+  asked, rather than letting it sound like separate servers.
+- While it runs, anyone on the same network can reach the backends. Ctrl-C when you're done.
+- Add `--local-db` as usual if the network blocks Supabase (then sign up fresh on the local database).
+
 ---
 
 ## The demo, step by step

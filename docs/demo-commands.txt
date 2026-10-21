@@ -1,0 +1,89 @@
+CHATSCALE DEMO — COMMAND CHEAT SHEET
+======================================
+Full script with what to say at each step: docs/DEMO.md
+Full written findings: docs/REPORT.md
+One-page honesty/scope handout: docs/REPORT-handout.pdf
+
+cd ~/dev/wp_project
+
+
+PART 1 — THE PROBLEM (no Redis, no Docker, two plain processes)
+-----------------------------------------------------------------
+./scripts/demo-two-copies.sh
+
+Wait for "Ready." (~20s). Refresh both browser windows once.
+  Alice: http://localhost:3000
+  Bob:   http://localhost:3001
+
+Alice sends a message -> Alice sees it -> Bob sees NOTHING (the bug).
+Refresh Bob's window -> message appears (proves it's a live-delivery bug,
+not a data-loss bug — it was saved, just not pushed live).
+
+Stop: Ctrl-C in this terminal.
+
+
+PART 2 — THE FIX (Redis, via Docker — started automatically by the script)
+-----------------------------------------------------------------
+./scripts/demo-two-copies.sh --fixed
+
+(Docker Desktop must already be running. The script itself starts and
+removes a Redis/Valkey container — you do not run any docker commands
+by hand.)
+
+Wait for "Ready. FIXED ...". Refresh both windows.
+Alice sends a message -> Bob gets it INSTANTLY, green highlight.
+
+Optional, in a second terminal (shows Redis traffic live):
+  cd backend && npm run watch-redis
+
+Stop: Ctrl-C the demo terminal (and watch-redis terminal if opened).
+
+
+PART 3 — OPTIONAL: KUBERNETES + AUTOSCALING (only if rehearsed tonight)
+-----------------------------------------------------------------
+./scripts/k8s-up.sh
+   (brings up the app + Prometheus + Grafana on a real local Kubernetes
+    cluster, k3d. ~1-2 minutes.)
+
+./scripts/k8s-dashboards.sh
+   (run in a SEPARATE terminal, leave it running — opens Grafana access
+    at http://localhost:3001, no login needed. Open the "ChatScale —
+    Backend Overview" dashboard tab now.)
+
+./scripts/hpa-compare.sh connections
+   (run in a THIRD terminal. Watch the pod count go 2 -> 3 within
+    ~30-40 seconds, live on the terminal and the Grafana dashboard.)
+
+Say: "We also ran this identical test using CPU instead of connection
+count as the scaling signal — it never scaled at all, the whole run."
+
+IF ANYTHING LOOKS OFF: do not debug live. Open docs/REPORT.md section 6
+instead and talk through the numbers with the dashboard open (or even
+just described) — nothing to fix mid-sentence.
+
+Stop: Ctrl-C the hpa-compare.sh and k8s-dashboards.sh terminals.
+Full teardown when completely done: ./scripts/k8s-down.sh
+
+
+OPTIONAL: BOB ON A SECOND COMPUTER
+-----------------------------------------------------------------
+Add --lan to Part 1 or Part 2:
+  ./scripts/demo-two-copies.sh --lan
+  ./scripts/demo-two-copies.sh --fixed --lan
+The "Ready." box prints Bob's address (e.g. http://172.20.10.2:3001). Type it
+into a browser on the other computer. Same Wi-Fi / phone hotspot required.
+Both backends still run on this Mac; only Bob's browser is on the other PC.
+
+
+TROUBLESHOOTING
+-----------------------------------------------------------------
+"Port already in use"        -> something else is running there, stop it, retry
+Badge says "Reconnecting..." -> script not ready yet, wait for "Ready.", refresh
+Bob DOES get the message in Part 1 -> his page reloaded (tab switch/refresh),
+                                       check badges say copy-A / copy-B, resend
+"NOT READY ... connection timeout" -> network blocks Supabase (college wifi).
+                                       Use a phone hotspot, or add --local-db
+--fixed says Docker is needed -> open Docker Desktop, wait, retry
+Part 3: cluster/pods not healthy -> skip Part 3, use the fallback above
+
+Full troubleshooting table: docs/DEMO.md, "If something goes wrong"

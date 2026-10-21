@@ -1,0 +1,214 @@
+CHATSCALE — SHOW THE FAILURE, THEN THE FIX (REDIS)
+====================================================
+The story in one line:
+  Two copies of the server. Without Redis, a message sent to one copy never
+  reaches users on the other. With Redis, it does. Same code, one setting.
+
+There are TWO ways to show this. Use TRACK A for the live demo (it is what
+was rehearsed and has the visual Alice/Bob windows). TRACK B is a backup that
+shows the same thing on real Kubernetes with automated checks.
+
+Always start here:
+  cd ~/dev/wp_project
+  Docker Desktop must be running (whale icon in the menu bar).
+
+
+======================================================================
+TRACK A — LAPTOP DEMO (Alice and Bob, two browser windows)   [PRIMARY]
+======================================================================
+
+ONE-TIME SETUP (do this the day before)
+---------------------------------------
+1. Start the demo:   ./scripts/demo-two-copies.sh
+2. Window 1 (http://localhost:3000): sign up as   alice
+   Window 2 (http://localhost:3001): sign up as   bob
+3. As alice: create a space called  Demo Day , click Invite, type  bob
+4. As bob: click the tick on the invitation at the top of the sidebar.
+5. Both are now in #general of Demo Day. Ctrl-C to stop.
+
+SCREEN LAYOUT
+-------------
+  Left half:  Alice window (:3000)      Right half:  Bob window (:3001)
+  Bottom:     the terminal running the script
+  Use TWO WINDOWS, not two tabs. Do not refresh or touch either window
+  until the step that says to. A reload reads the database and makes the
+  message LOOK delivered, which would hide the bug.
+
+
+--- PART 1: THE FAILURE (no Redis) ---------------------------------
+
+  ./scripts/demo-two-copies.sh
+
+Wait for "Ready." (about 20 seconds). Refresh both windows ONCE.
+Check the bottom-left badges: Alice says copy-A, Bob says copy-B.
+
+  1. Alice types:  Hi Bob, can you see this?     (press Enter)
+  2. Alice sees her message. Bob's window shows NOTHING.
+  3. Point at the terminal line:
+       [copy-A] message ... delivered to 1 socket(s) on this copy
+     Say: "copy-A delivered it to exactly one person: Alice herself.
+           copy-B never heard about it."
+  4. Show the message WAS saved (Supabase SQL Editor, saved query
+     "Demo - latest messages"):
+
+       SELECT m.messageid AS id, u.username AS sender, c.channelname AS channel,
+              m.messagecontent AS message, m.messagedate AS sent_at
+       FROM messages m
+       JOIN users u    ON u.userid = m.userid
+       JOIN channels c ON c.channelid = m.channelid
+       ORDER BY m.messageid DESC
+       LIMIT 10;
+
+     (Do NOT open the users table on screen: it holds password hashes.)
+     Using the local database instead of Supabase?
+       sqlite3 -header -column backend/data/chat.sqlite \
+         "SELECT MessageID, MessageContent, MessageDate FROM Messages ORDER BY MessageID DESC LIMIT 1;"
+  5. NOW refresh Bob's window. The message appears.
+     Say: "It was never lost. Reloading reads the database. It just was not
+           delivered LIVE. That is why this bug is dangerous: with one
+           server it never happens."
+
+Stop:  Ctrl-C in the terminal.
+
+
+--- PART 2: THE FIX (with Redis) -----------------------------------
+
+  ./scripts/demo-two-copies.sh --fixed
+
+What happens: the script starts a Redis (Valkey) container in Docker for you
+and removes it again on exit. You do not type any docker commands.
+Docker Desktop just has to be running.
+
+Wait for "Ready. FIXED ...". Refresh both windows ONCE.
+
+  1. Point at the terminal line:   [realtime] adapter: Redis ...
+     Say: "Each copy connects to Redis at start-up."
+  2. Alice types:  Hi Bob, what about now?
+  3. Bob's window shows it INSTANTLY with a green highlight
+     (the highlight means it arrived live, not from a reload).
+  4. Point at the terminal line:
+       delivered to 1 socket(s) on this copy + 1 on other copies via Redis
+     Say: "copy-A published it to Redis, copy-B picked it up and delivered
+           it to Bob."
+
+OPTIONAL, STRONG: watch Redis live. Open a SECOND terminal BEFORE Part 2:
+
+  cd ~/dev/wp_project/backend && npm run watch-redis
+
+Then have Alice send one more message. It prints in plain words, e.g.:
+  copy-A -> Redis -> every copy   message:new for channel:1
+  alice: "Hi Bob, what about now?"
+Say: "Anything one copy knows that the others need must be shared:
+      messages, friend requests, online status, even our 2FA lockout counter."
+
+Stop:  Ctrl-C the demo terminal (and the watch-redis terminal).
+
+
+--- BOB ON A SECOND COMPUTER (optional) ----------------------------
+Add --lan to either command:
+
+  ./scripts/demo-two-copies.sh --lan              # the failure
+  ./scripts/demo-two-copies.sh --fixed --lan      # the fix
+
+The "Ready." box prints the addresses, e.g.  Bob: open http://172.20.10.2:3001
+Alice opens hers on this Mac. Bob types his into a browser on the OTHER computer.
+  - Both computers on the SAME Wi-Fi or phone hotspot (college Wi-Fi often
+    blocks device-to-device traffic: if Bob's page will not load, use a hotspot).
+  - Use the address the script prints; it changes with the network.
+  - Both backend copies still run on this Mac. Only Bob's browser is elsewhere.
+  - Add --local-db too if the network blocks Supabase.
+  - Rehearse once on the SAME network you will present on.
+
+
+--- TRACK A TROUBLESHOOTING ----------------------------------------
+  "Port ... already in use"      Something else is running. Ctrl-C it, retry.
+  Badge says "Reconnecting..."   Script not ready yet. Wait for "Ready.", refresh.
+  Bob DOES get the message       in Part 1: his page reloaded. Check badges say
+                                 copy-A / copy-B, use two windows, resend.
+  "NOT READY ... timeout"        The network blocks Supabase (college wifi).
+                                 Use a phone hotspot, or add --local-db:
+                                   ./scripts/demo-two-copies.sh --local-db
+                                   ./scripts/demo-two-copies.sh --fixed --local-db
+                                 (local DB has no alice/bob: sign up again, or
+                                  use demo users ava / milo, password in
+                                  backend/src/config/seed.js)
+  --fixed says Docker needed     Open Docker Desktop, wait, retry.
+  "Request failed (404)"         Backends older than the frontend. Ctrl-C, restart.
+
+
+======================================================================
+TRACK B — SAME PROOF ON REAL KUBERNETES (automated checks)   [BACKUP]
+======================================================================
+Shows the failure and the fix on real Kubernetes pods, with PASS/FAIL lines
+instead of two browser windows. Good if you want to prove it is not just a
+laptop trick.
+
+SETUP
+-----
+  ./scripts/k8s-up.sh
+  kubectl -n chatscale get pods          # all should be 1/1 Running
+  (If a node is crash-looping after a Docker restart:
+     k3d cluster delete chatscale && ./scripts/k8s-up.sh )
+
+--- THE FIX IS ON (normal state) -----------------------------------
+  cd backend
+  BASE=http://localhost:8080 node tests/cross-copy.test.js
+
+Expected (verified):
+  PASS alice and bob are on different copies  (two different pods)
+  PASS bob receives alice's message live  latency ~4 ms
+  PASS friend request notification crosses copies
+  all checks passed
+
+Show Redis itself is alive and carrying the traffic:
+  kubectl -n chatscale exec deploy/redis -- valkey-cli ping
+        -> PONG
+  kubectl -n chatscale exec deploy/redis -- valkey-cli pubsub channels
+        -> socket.io-request#/#  socket.io-response#/#  ...
+  Say: "Those channels are how the backend pods talk to each other."
+
+--- THE FAILURE: TURN REDIS OFF ------------------------------------
+  kubectl -n chatscale set env deployment/backend REDIS_URL=
+  kubectl -n chatscale rollout status deployment/backend --timeout=120s
+
+  cd backend
+  BASE=http://localhost:8080 EXPECT=isolated node tests/cross-copy.test.js
+
+Expected:
+  PASS alice and bob are on different copies
+  PASS bob does NOT receive alice's message (isolated copies)
+  PASS friend request notification does NOT cross copies
+  Say: "Same pods, same code. Only Redis removed. The message never crosses."
+
+--- THE FIX: TURN REDIS BACK ON ------------------------------------
+  kubectl -n chatscale set env deployment/backend REDIS_URL-
+  kubectl -n chatscale rollout status deployment/backend --timeout=120s
+
+  cd backend
+  BASE=http://localhost:8080 node tests/cross-copy.test.js
+  (should be all PASS again)
+
+  ALWAYS finish by turning Redis back on and confirming the PASS lines.
+  Do not leave the cluster in the broken state.
+
+NOTES FOR TRACK B
+  - Turning Redis off/on makes Kubernetes do a rolling restart of the backend
+    pods (about a minute each way). Rehearse it once so the wait is not a
+    surprise. Narrate while it rolls: "Kubernetes is replacing the pods."
+  - The OFF -> test -> ON sequence matches what is recorded in
+    docs/evidence/04-kubernetes.md.
+  - These tests create throwaway users in the cluster's own database. They
+    never touch Supabase. Never point BASE at a backend using Supabase.
+
+
+======================================================================
+WHAT TO SAY AT THE END (either track)
+======================================================================
+  "The bug: each server holds its live connections in its own memory, so a
+   message only reaches users on the same server. The fix: Redis acts as a
+   shared message board. Every server publishes to it and listens to it.
+   Same code, one setting. The fix works, but it is not free: every message
+   makes an extra trip through Redis, and Redis becomes a single point of
+   failure. We measured both."
+
+Full script with FAQ: docs/DEMO.md        Findings: docs/REPORT.md
