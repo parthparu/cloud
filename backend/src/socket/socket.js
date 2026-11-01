@@ -58,8 +58,12 @@ exports.initializeSocket = (server) => {
 
     socket.join(`user:${socket.user.id}`);
 
-    // Which process is serving this socket — the "served-by-pod" badge (PLAN.md Phase 1)
-    socket.emit('session:ready', { node: INSTANCE_NAME, pid: process.pid });
+    // Which process is serving this socket — the "served-by-pod" badge (PLAN.md Phase 1). The event
+    // is always sent (clients and tests treat it as "connected and ready"); SHOW_SERVED_BY=false only
+    // leaves the pod name out, so a public deployment doesn't show visitors its internal pod names.
+    // On by default: the laptop and Kubernetes demos rely on the badge to show which copy is which.
+    const showServedBy = process.env.SHOW_SERVED_BY !== 'false';
+    socket.emit('session:ready', showServedBy ? { node: INSTANCE_NAME, pid: process.pid } : {});
 
     // Server rooms carry space-wide events (e.g. new channels); members only
     socket.on('join:server', async (serverId) => {

@@ -61,6 +61,10 @@
 | CHG-0041 | 2026-10-21 | Parth | Planning / Infrastructure | Decision to add Red Hat OpenShift (hosted Developer Sandbox) as a second deployment target after the demo, k3d unchanged; plan in docs/OPENSHIFT.md; `oc` CLI installed. **No deployment yet** | Planning | Low | Proposed |
 | CHG-0042 | 2026-10-21 | Parth | Infrastructure (OpenShift) | Single-file OpenShift deployment for the web console's Import YAML (builds, Postgres, Redis, 2 backends, frontend, Route) + generator script for secrets; validated locally, **not yet imported on a real sandbox** | Feature | Medium | In Progress |
 | CHG-0043 | 2026-10-21 | Parth | OpenShift / Performance | Diagnosed slowness on the hosted sandbox (distance to US-East + uncompressed JS), added gzip to the OpenShift nginx config (JS -70%), `--update` mode for the generator, documented the update workflow | Fix | Low | Implemented |
+| CHG-0044 | 2026-10-21 | Parth | Socket layer / OpenShift | `SHOW_SERVED_BY` setting (default on): lets a deployment leave pod names out of the `session:ready` event; set off in the OpenShift template | Feature | Low | Implemented |
+| CHG-0045 | 2026-10-21 | Parth | Documentation | Full demo speaker notes (`docs/DEMO-SPEAKER-NOTES.md`): timed script, fallbacks, honest-limits list, Q&A answers | Docs | Low | Implemented |
+| CHG-0046 | 2026-10-30 | Parth | Documentation | Course mini-project report (.docx) built from the faculty template, with highlighted fields needing the authors' input | Docs | Low | Implemented |
+| CHG-0047 | 2026-11-01 | Parth | Repository hygiene | `.gitignore` now ignores `.claude/` and `CLAUDE.md`; built a clean submission zip from tracked and untracked-not-ignored files (no secrets, node_modules or local data) | Process | Low | Implemented |
 ---
 
 ## 2. Detailed Entries
@@ -2869,12 +2873,149 @@ health check still served. `--update` output: 16 documents, no Secret, no secret
 normal mode unchanged (17 documents). The fix file: parses, one ConfigMap, identical to the template's,
 accepted by a server-side dry run, no secrets. The test container was removed afterwards.
 
-**Not done / limitations:** the fix has not been applied to the live sandbox (needs the owner's console
-edit or `oc login`); the ~0.3–0.6 s per-request round trip to US-East remains. Before/after timings on
-the live route are still to be measured once applied.
+**Applied and measured on the live sandbox (same day):** the owner applied the ConfigMap and restarted
+the frontend (via the console's browser terminal — `oc login` from the Mac failed because the network
+the Mac was on blocks outbound port 6443; the console on 443 was fine). Live check: the JS bundle is
+now served with `Content-Encoding: gzip`, 296,031 → 87,087 bytes. Download time, 5 fresh connections each:
+JS 1.31–2.02 s (median ≈1.4 s) versus 3.38 s before; CSS 0.82–0.96 s (7,201 bytes). A tiny health-check
+request ranged 1.0–11.8 s across five tries — that spread is the Mac's network path to US-East (jitter or
+loss), not the app (the larger files on the same connection were steady).
+
+**Remaining limitation:** the ~0.3–0.6 s per-request round trip to US-East is unchanged and cannot be
+fixed from our side; the owner's current network also showed high jitter.
 
 **Rollback Plan:** revert the template/script edits; on the sandbox re-apply the previous ConfigMap
 (remove the gzip lines) and restart the frontend.
+
+---
+
+### CHG-0044 — `SHOW_SERVED_BY`: Optional Pod-Name Badge
+
+| Field | Value |
+|---|---|
+| **Change ID** | CHG-0044 |
+| **Date Raised** | 2026-10-21 |
+| **Date Implemented** | 2026-10-21 |
+| **Author** | Parth |
+| **Module / Component** | Socket layer (backend), OpenShift template |
+| **Change Type** | Feature |
+| **Risk Level** | Low |
+| **Status** | Implemented (not yet built/deployed on the sandbox) |
+
+**Description**
+The "Live · backend-…" badge and "Served by …" tooltip expose internal pod names; harmless but not
+something a public URL should show. Asked and answered (not assumed): keep the feature, make it
+configurable, default **on**, turn **off** on the OpenShift deployment. Backend only:
+`backend/src/socket/socket.js` still always emits `session:ready` — clients and the test/failover
+scripts use it as "connected and ready" — but with `SHOW_SERVED_BY=false` the payload is `{}` instead
+of `{node, pid}`. The frontend already shows the badge only when a name arrives, so it is unchanged.
+`k8s/openshift/chatscale-sandbox.template.yaml` sets `SHOW_SERVED_BY: "false"`; the laptop, Docker
+Compose and k3d setups are unaffected (default on). `docs/OPENSHIFT.md` documents the four steps to
+apply it to the running app.
+
+**Verification:** a throwaway backend (empty `DATABASE_URL`, scratch SQLite, spare port) was started
+with the setting unset, `true` and `false` and a real socket.io client read the event: unset → `{node, pid}`;
+`true` → `{node, pid}`; `false` → `{}` (event still delivered). Test server stopped, files removed.
+The existing test suites were not re-run for this change.
+
+**Limitations:** `tests/cross-copy.test.js`, the failover tests and the Alice/Bob demo need the pod name,
+so they must run with the setting on (the default) — turning it off on a deployment disables the
+"different copies" proof there. The live sandbox still needs a backend rebuild + the ConfigMap key +
+a backend restart before the badge disappears. `pid` is also now omitted when off.
+
+**Files Modified:** `backend/src/socket/socket.js`, `k8s/openshift/chatscale-sandbox.template.yaml`,
+`docs/OPENSHIFT.md`, `docs/CHANGE_LOG.md`
+
+**Rollback Plan:** revert the three-line change in `socket.js` (and the template line); behaviour returns to always-on.
+
+---
+
+### CHG-0045 — Full Demo Speaker Notes
+
+| Field | Value |
+|---|---|
+| **Change ID** | CHG-0045 |
+| **Date Raised** | 2026-10-21 |
+| **Date Implemented** | 2026-10-21 |
+| **Author** | Parth |
+| **Module / Component** | Documentation |
+| **Change Type** | Docs |
+| **Risk Level** | Low |
+| **Status** | Implemented |
+
+**Description**
+Added `docs/DEMO-SPEAKER-NOTES.md`: pre-flight checklist, a ~14-minute timed script (broken / fixed /
+local Kubernetes + Grafana / OpenShift / close) with DO and SAY cues, a fallback for each part,
+honest answers to likely faculty questions, a "do not say" list and the key numbers.
+
+**Verification:** every figure was checked against `docs/evidence/` (p95 110/85/34 ms; CPU 54%/36%
+with no rescale; pod replacement 7 s, reconnect 0.6-1.4 s; Redis tax 1 ms p50) and every script it
+names exists. The commands were not re-run end to end for this change.
+
+**Limitations:** the authorship answer is a placeholder the presenter must fill in. Cost figure is the report's estimate.
+
+**Files Modified:** `docs/DEMO-SPEAKER-NOTES.md`, `docs/CHANGE_LOG.md`
+
+**Rollback Plan:** delete the file and this entry.
+
+---
+
+### CHG-0046 — Mini-Project Report (Faculty Template)
+
+| Field | Value |
+|---|---|
+| **Change ID** | CHG-0046 |
+| **Date Raised** | 2026-10-30 |
+| **Date Implemented** | 2026-10-30 |
+| **Author** | Parth |
+| **Module / Component** | Documentation |
+| **Change Type** | Docs |
+| **Risk Level** | Low |
+| **Status** | Implemented (awaiting authors' inputs) |
+
+**Description**
+Produced `ChatScale_Mini_Project_Report.docx` from `BTECH_CC_MINIPROJECT_report format.docx` (cover,
+declaration, certificate, contents, seven chapters, references, AI-assistance appendix). Content is drawn
+from `docs/REPORT.md` and `docs/evidence/`. Three figures were generated (architecture, scaling latency,
+autoscaling signals). Everything the authors must supply is highlighted yellow: names, roll numbers, date,
+academic year, team-contribution table, ten screenshots, and the AI-assistance statement.
+
+**Verification:** passed the docx validator against the original template. The table of contents is a field
+and has to be updated in Word. The document was not rendered to PDF (Word automation hung), so page layout
+was not visually checked.
+
+**Files Modified:** `docs/CHANGE_LOG.md` (the report itself lives in `~/Downloads`, outside the repository)
+
+**Rollback Plan:** delete the .docx and this entry.
+
+---
+
+### CHG-0047 — Ignore Claude Code Files; Clean Submission Zip
+
+| Field | Value |
+|---|---|
+| **Change ID** | CHG-0047 |
+| **Date Raised** | 2026-11-01 |
+| **Date Implemented** | 2026-11-01 |
+| **Author** | Parth |
+| **Module / Component** | Repository hygiene |
+| **Change Type** | Process |
+| **Risk Level** | Low |
+| **Status** | Implemented |
+
+**Description**
+`.gitignore` replaced the single `.claude/settings.local.json` entry with `.claude/`, `CLAUDE.md` and
+`.claude.json`. No such files existed inside the project folder. A submission archive
+(`~/Downloads/chatscale-project.zip`, 168 files) was built from `git ls-files -co --exclude-standard`, which
+leaves out ignored files (real `.env`, `node_modules`, local database, logs) and, additionally,
+`docs/STATUS.md` (a session-handoff note for Claude). Text mentions of Claude in `docs/CHANGE_LOG.md` and
+`.gitignore` were left as they are.
+
+**Verification:** the archive listing contains no `.env` (only `.env.example` files), no `node_modules`, no `.git`.
+
+**Files Modified:** `.gitignore`, `docs/CHANGE_LOG.md`
+
+**Rollback Plan:** restore the old `.gitignore` line; delete the zip.
 
 ---
 

@@ -32,8 +32,10 @@ Thumbs.db
 *.swp
 
 # ---------- Tooling ----------
-# Personal Claude Code settings (shared ones in .claude/settings.json are kept)
-.claude/settings.local.json
+# Claude Code files (settings, memory, instructions) — never part of the project
+.claude/
+CLAUDE.md
+.claude.json
 # Generated knowledge-graph output
 graphify-out/
 
@@ -45,3 +47,9 @@ backend/certs/
 
 # Generated per-cluster secret for the local k8s overlay (scripts/k8s-up.sh creates it)
 k8s/overlays/local/secret.env
+
+# Presenter-only notes and working handoff files: kept on disk, not part of the evaluated repository
+docs/STATUS.md
+docs/DEMO-SPEAKER-NOTES.md
+docs/demo-commands.txt
+docs/demo-redis-failure-and-success.txt

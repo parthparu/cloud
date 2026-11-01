@@ -42,6 +42,10 @@ data:
   # it to "" (empty) and restart the backend; set it back to turn the fix on again.
   REDIS_URL: redis://redis:6379
   SEED_DEMO_DATA: "false"
+  # Off on this public deployment: the "Live · backend-..." badge would show visitors the internal pod
+  # names. Set to "true" (and restart the backend) to show it for a demo — it is how you prove two
+  # users are on different backend copies. Needs a backend image built after CHG-0044.
+  SHOW_SERVED_BY: "false"
   SHUTDOWN_DRAIN_SECONDS: "3"
   UPLOADS_DIR: /tmp/uploads
 ---

@@ -57,7 +57,14 @@ Measured from India against the live sandbox (2026-10-21):
   and the chat itself are far lighter. Open the app once before presenting.
 - A phone hotspot adds jitter (first connect in one test took 3 s vs 0.3 s later); use steady Wi-Fi if possible.
 
+**Result after applying it (live, 2026-10-21):** JS download 3.38 s → ~1.4 s (median of 5; range 1.3–2.0 s);
+CSS ~0.9 s. A tiny request varied 1.0–11.8 s on the same connection — network jitter on that Mac's path to
+US-East, not the app. If a run looks that erratic, try a different network (e.g. a phone hotspot) and re-measure.
+
 What remains slow after the fix: the ~0.3–0.6 s round trip on every request. That is physics, not config.
+
+If `oc login` times out on port 6443, that network blocks the API port (the console on 443 still works). Use the
+console's browser terminal (`>_` icon, top right) — it is already logged in — or switch networks.
 
 ## Updating a running app
 
@@ -77,6 +84,23 @@ on the sandbox until the change is pushed *and* rebuilt.
 Check which cluster you are on with `oc whoami --show-server`.
 
 Optional: a GitHub webhook on the BuildConfig makes every push build automatically.
+
+## Hiding or showing the pod-name badge (`SHOW_SERVED_BY`)
+
+The "Live · backend-…" badge (and its "Served by …" tooltip) shows which backend copy serves a user.
+It is how the demos prove two users are on different copies, but on a public address it exposes
+internal pod names. `SHOW_SERVED_BY` (backend setting, **on by default**) controls it; the template
+sets it to `"false"` for OpenShift. The frontend needed no change: it only shows the badge if the server
+sends a name.
+
+To apply it to the **running** sandbox app (all four steps are needed):
+1. `git push` the backend change, then **Builds → chatscale-backend → Actions → Start build** and wait for it to finish
+   (the setting only exists in a backend image built after this change).
+2. Add `SHOW_SERVED_BY: "false"` to the `backend-config` ConfigMap (console: **Workloads → ConfigMaps →
+   backend-config → YAML**, one line under `data:`), or in the browser terminal:
+   `oc patch configmap backend-config --type merge -p '{"data":{"SHOW_SERVED_BY":"false"}}'`
+3. Restart the backend: **Deployments → backend → Actions → Restart rollout** (`oc rollout restart deployment/backend`).
+4. Reload the app. The badge then shows just "Live". For a demo, set it back to `"true"` and restart.
 
 ## What you do (I cannot do these)
 
